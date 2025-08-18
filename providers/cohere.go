@@ -38,18 +38,106 @@ func NewCohereProvider(apiKey, model string, extraHeaders map[string]string) *Co
 		extraHeaders = make(map[string]string)
 	}
 
-	return &CohereProvider{
+	p := &CohereProvider{
 		apiKey:       apiKey,
 		model:        model,
 		extraHeaders: extraHeaders,
 		options:      make(map[string]any),
 		logger:       logging.NewLogger(logging.LogLevelInfo),
 	}
+
+	// Register capabilities based on model
+	p.registerCapabilities()
+	return p
 }
 
 // Name returns "cohere" as the provider identifier.
 func (p *CohereProvider) Name() string {
 	return "cohere"
+}
+
+// registerCapabilities registers capabilities for all known Cohere models
+func (p *CohereProvider) registerCapabilities() {
+	registry := GetRegistry()
+
+	// Define all known Cohere models
+	allModels := []string{
+		// Command A models
+		"command-a-03-2025",
+
+		// Command R Plus models
+		"command-r-plus-08-2024",
+		"command-r-plus-04-2024",
+		"command-r-plus",
+
+		// Command R models
+		"command-r-08-2024",
+		"command-r-03-2024",
+		"command-r",
+
+		// Legacy Command models
+		"command",
+		"command-light",
+		"command-nightly",
+		"command-light-nightly",
+	}
+
+	for _, model := range allModels {
+		// Structured response support for newer models
+		structuredResponseModels := []string{
+			"command-a-03-2025",
+			"command-r-plus-08-2024",
+			"command-r-plus-04-2024",
+			"command-r-plus",
+			"command-r-08-2024",
+			"command-r-03-2024",
+			"command-r",
+		}
+
+		if slices.Contains(structuredResponseModels, model) {
+			// IMPORTANT: Cohere quirk - structured response only via tool calling
+			registry.Register(ProviderCohere, model, CapStructuredResponse, StructuredResponseConfig{
+				RequiresToolUse:  true, // THE COHERE QUIRK!
+				MaxSchemaDepth:   5,
+				SupportedFormats: []string{"json"},
+				SystemPromptHint: "You must use the provided tool to structure your response",
+			})
+		}
+
+		// Function calling support
+		if strings.Contains(model, "command-r") {
+			registry.Register(ProviderCohere, model, CapFunctionCalling, FunctionCallingConfig{
+				MaxFunctions:      50,
+				SupportsParallel:  false,
+				RequiresToolRole:  true,
+				SupportsStreaming: true,
+			})
+		} else if strings.Contains(model, "command") {
+			registry.Register(ProviderCohere, model, CapFunctionCalling, FunctionCallingConfig{
+				MaxFunctions:      20,
+				SupportsParallel:  false,
+				RequiresToolRole:  true,
+				SupportsStreaming: false,
+			})
+		}
+
+		// All Cohere models support streaming
+		registry.Register(ProviderCohere, model, CapStreaming, StreamingConfig{
+			SupportsSSE:    true,
+			BufferSize:     8192,
+			ChunkDelimiter: "\n",
+			SupportsUsage:  false,
+		})
+	}
+}
+
+// HasCapability checks if a capability is supported
+func (p *CohereProvider) HasCapability(capability Capability, model string) bool {
+	targetModel := p.model
+	if model != "" {
+		targetModel = model
+	}
+	return GetRegistry().HasCapability(ProviderCohere, targetModel, capability)
 }
 
 // Endpoint returns the base URL for the Cohere API.
@@ -113,35 +201,17 @@ func (p *CohereProvider) SetLogger(logger logging.Logger) {
 	p.logger = logger
 }
 
-// SupportsStructuredResponse indicates that Cohere supports structured output
-// through its system prompts and response formatting capabilities.
-// Only specific models support structured output.
-func (p *CohereProvider) SupportsStructuredResponse() bool {
-	// Models that support structured output according to Cohere documentation
-	supportedModels := []string{
-		"command-a-03-2025",
-		"command-r-plus-08-2024",
-		"command-r-plus",
-		"command-r-08-2024",
-		"command-r",
-	}
-
-	return slices.Contains(supportedModels, p.model)
-}
-
-// SupportsStreaming returns whether the provider supports streaming responses
-func (p *CohereProvider) SupportsStreaming() bool {
-	return true
-}
-
-// SupportsFunctionCalling indicates if the provider supports function calling
-func (p *CohereProvider) SupportsFunctionCalling() bool {
-	return true
-}
-
 // PrepareRequest creates the request body for a Cohere API call
 func (p *CohereProvider) PrepareRequest(req *Request, options map[string]any) ([]byte, error) {
-	requestBody := p.initializeRequestBody()
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
+	}
+
+	requestBody := p.initializeRequestBodyWithModel(model)
 
 	p.addMessagesToRequestBody(requestBody, req.Messages)
 
@@ -151,7 +221,7 @@ func (p *CohereProvider) PrepareRequest(req *Request, options map[string]any) ([
 		requestBody[cohereKeyPreamble] = systemPrompt
 	}
 
-	if req.ResponseSchema != nil && p.SupportsStructuredResponse() {
+	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
 		p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 	}
 
@@ -224,7 +294,15 @@ func (p *CohereProvider) ParseResponse(body []byte) (*Response, error) {
 
 // PrepareStreamRequest prepares a request body for streaming
 func (p *CohereProvider) PrepareStreamRequest(req *Request, options map[string]any) ([]byte, error) {
-	requestBody := p.initializeRequestBody()
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
+	}
+
+	requestBody := p.initializeRequestBodyWithModel(model)
 	requestBody[cohereKeyStream] = true
 
 	p.addMessagesToRequestBody(requestBody, req.Messages)
@@ -235,7 +313,7 @@ func (p *CohereProvider) PrepareStreamRequest(req *Request, options map[string]a
 		requestBody[cohereKeyPreamble] = systemPrompt
 	}
 
-	if req.ResponseSchema != nil && p.SupportsStructuredResponse() {
+	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
 		p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 	}
 
@@ -262,10 +340,10 @@ func (p *CohereProvider) ParseStreamResponse(chunk []byte) (*Response, error) {
 	return &Response{Content: Text{Value: response.Text}}, nil
 }
 
-// initializeRequestBody creates the base request structure
-func (p *CohereProvider) initializeRequestBody() map[string]any {
+// initializeRequestBodyWithModel creates the base request structure with specified model
+func (p *CohereProvider) initializeRequestBodyWithModel(model string) map[string]any {
 	return map[string]any{
-		"model":           p.model,
+		"model":           model,
 		cohereKeyMessages: []map[string]any{},
 	}
 }

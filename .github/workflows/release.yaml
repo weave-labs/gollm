@@ -1,0 +1,18 @@
+name: "Release"
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  tag-and-release:
+    uses: weave-labs/ci/.github/workflows/tag-and-release.yaml@main
+    with:
+      default-bump: "patch"
+    secrets:
+      APP_ID: ${{ secrets.STITCH_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.STITCH_PRIVATE_KEY }}

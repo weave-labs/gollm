@@ -53,13 +53,18 @@ func NewMistralProvider(apiKey, model string, extraHeaders map[string]string) *M
 	if extraHeaders == nil {
 		extraHeaders = make(map[string]string)
 	}
-	return &MistralProvider{
+
+	p := &MistralProvider{
 		apiKey:       apiKey,
 		model:        model,
 		extraHeaders: extraHeaders,
 		options:      make(map[string]any),
 		logger:       logging.NewLogger(logging.LogLevelInfo),
 	}
+
+	// Register capabilities based on model
+	p.registerCapabilities()
+	return p
 }
 
 // SetLogger configures the logger for the Mistral provider.
@@ -93,41 +98,119 @@ func (p *MistralProvider) Name() string {
 	return "mistral"
 }
 
+// registerCapabilities registers capabilities for all known Mistral models
+func (p *MistralProvider) registerCapabilities() {
+	registry := GetRegistry()
+
+	// Define all known Mistral models
+	allModels := []string{
+		// Current latest models
+		"mistral-large-latest",
+		"mistral-medium-latest",
+		"mistral-small-latest",
+		"devstral-small-latest",
+		"codestral-latest",
+		"ministral-8b-latest",
+		"ministral-3b-latest",
+		"pixtral-12b-latest",
+		"pixtral-large-latest",
+
+		// Versioned models
+		"mistral-large-2411",
+		"mistral-large-2407",
+		"mistral-medium-2312",
+		"mistral-small-2312",
+		"mistral-small-2402",
+		"codestral-2405",
+		"ministral-8b-2410",
+		"ministral-3b-2410",
+		"pixtral-12b-2409",
+
+		// Other models
+		"open-mistral-nemo",
+		"open-mistral-7b",
+		"open-mixtral-8x7b",
+		"open-mixtral-8x22b",
+		"codestral-mamba",
+		"mistral-embed",
+	}
+
+	for _, model := range allModels {
+		// Structured response - all models except codestral-mamba
+		if model != "codestral-mamba" && model != "mistral-embed" {
+			registry.Register(ProviderMistral, model, CapStructuredResponse, StructuredResponseConfig{
+				MaxSchemaDepth:   10,
+				SupportedFormats: []string{"json_schema"},
+				RequiresJSONMode: true,
+			})
+		}
+
+		// Function calling - specific models
+		functionCallingSupportedModels := map[string]bool{
+			"mistral-large-latest":  true,
+			"mistral-large-2411":    true,
+			"mistral-large-2407":    true,
+			"mistral-medium-latest": true,
+			"mistral-medium-2312":   true,
+			"mistral-small-latest":  true,
+			"mistral-small-2312":    true,
+			"mistral-small-2402":    true,
+			"devstral-small-latest": true,
+			"codestral-latest":      true,
+			"codestral-2405":        true,
+			"ministral-8b-latest":   true,
+			"ministral-8b-2410":     true,
+			"ministral-3b-latest":   true,
+			"ministral-3b-2410":     true,
+			"pixtral-12b-latest":    true,
+			"pixtral-12b-2409":      true,
+			"pixtral-large-latest":  true,
+			"open-mistral-nemo":     true,
+		}
+
+		if functionCallingSupportedModels[model] {
+			registry.Register(ProviderMistral, model, CapFunctionCalling, FunctionCallingConfig{
+				MaxFunctions:      100,
+				SupportsParallel:  true,
+				MaxParallelCalls:  10,
+				SupportsStreaming: true,
+			})
+		}
+
+		// All Mistral models support streaming (except embed)
+		if model != "mistral-embed" {
+			registry.Register(ProviderMistral, model, CapStreaming, StreamingConfig{
+				SupportsSSE:    true,
+				BufferSize:     4096,
+				ChunkDelimiter: "data: ",
+				SupportsUsage:  true,
+			})
+		}
+
+		// Vision for pixtral models
+		if strings.Contains(model, "pixtral") {
+			registry.Register(ProviderMistral, model, CapVision, VisionConfig{
+				MaxImageSize:        10 * 1024 * 1024,
+				SupportedFormats:    []string{"jpeg", "png", "webp"},
+				MaxImagesPerRequest: 5,
+			})
+		}
+	}
+}
+
+// HasCapability checks if a capability is supported
+func (p *MistralProvider) HasCapability(capability Capability, model string) bool {
+	targetModel := p.model
+	if model != "" {
+		targetModel = model
+	}
+	return GetRegistry().HasCapability(ProviderMistral, targetModel, capability)
+}
+
 // Endpoint returns the Mistral API endpoint URL.
 // This is "https://api.mistral.ai/v1/chat/completions".
 func (p *MistralProvider) Endpoint() string {
 	return "https://api.mistral.ai/v1/chat/completions"
-}
-
-// SupportsStructuredResponse indicates that Mistral supports structured output
-// through its system prompts and response formatting capabilities.
-// All models support structured output except codestral-mamba.
-func (p *MistralProvider) SupportsStructuredResponse() bool {
-	return p.model != "codestral-mamba"
-}
-
-// SupportsStreaming returns whether the provider supports streaming responses.
-// All Mistral models support streaming.
-func (p *MistralProvider) SupportsStreaming() bool {
-	return true
-}
-
-// SupportsFunctionCalling indicates if the provider supports function calling.
-// Only specific models support function calling.
-func (p *MistralProvider) SupportsFunctionCalling() bool {
-	supportedModels := map[string]bool{
-		"mistral-large-latest":  true,
-		"mistral-medium-latest": true,
-		"mistral-small-latest":  true,
-		"devstral-small-latest": true,
-		"codestral-latest":      true,
-		"ministral-8b-latest":   true,
-		"ministral-3b-latest":   true,
-		"pixtral-12b-latest":    true,
-		"pixtral-large-latest":  true,
-		"open-mistral-nemo":     true,
-	}
-	return supportedModels[p.model]
 }
 
 // Headers returns the required HTTP headers for Mistral API requests.
@@ -150,7 +233,15 @@ func (p *MistralProvider) Headers() map[string]string {
 
 // PrepareRequest creates the request body for a Mistral API call using the new Request structure.
 func (p *MistralProvider) PrepareRequest(req *Request, options map[string]any) ([]byte, error) {
-	requestBody := p.initializeRequestBody()
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
+	}
+
+	requestBody := p.initializeRequestBodyWithModel(model)
 
 	// Add system prompt if present
 	systemPrompt := p.extractSystemPromptFromRequest(req, options)
@@ -162,7 +253,7 @@ func (p *MistralProvider) PrepareRequest(req *Request, options map[string]any) (
 	p.addMessagesToRequestBody(requestBody, req.Messages)
 
 	// Add structured response if supported
-	if req.ResponseSchema != nil && p.SupportsStructuredResponse() {
+	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
 		p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 	}
 
@@ -241,7 +332,15 @@ func (p *MistralProvider) SetExtraHeaders(extraHeaders map[string]string) {
 
 // PrepareStreamRequest creates a request body for streaming API calls
 func (p *MistralProvider) PrepareStreamRequest(req *Request, options map[string]any) ([]byte, error) {
-	requestBody := p.initializeRequestBody()
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
+	}
+
+	requestBody := p.initializeRequestBodyWithModel(model)
 	requestBody[mistralKeyStream] = true
 
 	// Add system prompt if present
@@ -254,7 +353,7 @@ func (p *MistralProvider) PrepareStreamRequest(req *Request, options map[string]
 	p.addMessagesToRequestBody(requestBody, req.Messages)
 
 	// Add structured response if supported
-	if req.ResponseSchema != nil && p.SupportsStructuredResponse() {
+	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
 		p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 	}
 
@@ -298,10 +397,10 @@ func (p *MistralProvider) ParseStreamResponse(chunk []byte) (*Response, error) {
 	return &Response{Content: Text{Value: response.Choices[0].Delta.Content}}, nil
 }
 
-// initializeRequestBody creates the base request structure
-func (p *MistralProvider) initializeRequestBody() map[string]any {
+// initializeRequestBodyWithModel creates the base request structure with specified model
+func (p *MistralProvider) initializeRequestBodyWithModel(model string) map[string]any {
 	return map[string]any{
-		mistralKeyModel:     p.model,
+		mistralKeyModel:     model,
 		mistralKeyMaxTokens: p.options[mistralKeyMaxTokens],
 		mistralKeyMessages:  []map[string]any{},
 	}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -38,12 +39,14 @@ func TestOpenRouterProvider(t *testing.T) {
 		assert.Equal(t, "GoLLM Integration", headers["X-Title"])
 	})
 
-	t.Run("SupportsStructuredResponse returns true", func(t *testing.T) {
-		assert.True(t, provider.SupportsStructuredResponse())
+	t.Run("HasCapability StructuredResponse returns true", func(t *testing.T) {
+		t.Logf("Provider model: %s", provider.model)
+		t.Logf("HasCapability(CapStructuredResponse): %v", provider.HasCapability(CapStructuredResponse))
+		assert.True(t, provider.HasCapability(CapStructuredResponse))
 	})
 
-	t.Run("SupportsStreaming returns true", func(t *testing.T) {
-		assert.True(t, provider.SupportsStreaming())
+	t.Run("HasCapability Streaming returns true", func(t *testing.T) {
+		assert.True(t, provider.HasCapability(CapStreaming))
 	})
 
 	t.Run("SetDefaultOptions sets correct options", func(t *testing.T) {
@@ -252,7 +255,7 @@ func TestOpenRouterProvider(t *testing.T) {
 	})
 
 	t.Run("PrepareRequest includes JSON schema for structured response", func(t *testing.T) {
-		schema := map[string]any{
+		schemaMap := map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"name": map[string]any{
@@ -261,6 +264,11 @@ func TestOpenRouterProvider(t *testing.T) {
 			},
 		}
 
+		// Convert map to jsonschema.Schema
+		schemaBytes, _ := json.Marshal(schemaMap)
+		var schema jsonschema.Schema
+		_ = json.Unmarshal(schemaBytes, &schema)
+
 		request := &Request{
 			Messages: []Message{
 				{
@@ -268,7 +276,7 @@ func TestOpenRouterProvider(t *testing.T) {
 					Content: "test prompt",
 				},
 			},
-			ResponseSchema: schema,
+			ResponseSchema: &schema,
 		}
 
 		body, err := provider.PrepareRequest(request, nil)
@@ -280,9 +288,19 @@ func TestOpenRouterProvider(t *testing.T) {
 
 		// Check response format was set correctly
 		responseFormat, ok := req["response_format"].(map[string]any)
-		assert.True(t, ok)
-		assert.Equal(t, "json_object", responseFormat["type"])
-		assert.Equal(t, schema, responseFormat["schema"])
+		assert.True(t, ok, "response_format should be present")
+		if ok {
+			assert.Equal(t, "json_object", responseFormat["type"])
+			// Compare the schema as map[string]any since unmarshaling loses the type
+			schemaFromReq, ok := responseFormat["schema"].(map[string]any)
+			assert.True(t, ok, "schema should be present in response_format")
+			assert.NotNil(t, schemaFromReq)
+			// Just check that schema has expected structure
+			assert.Equal(t, "object", schemaFromReq["type"])
+			props, ok := schemaFromReq["properties"].(map[string]any)
+			assert.True(t, ok)
+			assert.Contains(t, props, "name")
+		}
 	})
 
 	t.Run("PrepareRequest formats multiple messages correctly", func(t *testing.T) {

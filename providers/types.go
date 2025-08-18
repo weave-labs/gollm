@@ -2,15 +2,16 @@ package providers
 
 import (
 	"encoding/json"
-	"github.com/invopop/jsonschema"
+
+	"github.com/modelcontextprotocol/go-sdk/jsonschema"
 )
 
 // Request represents a unified request structure
 type Request struct {
-	ResponseSchema     []byte             `json:"response_schema,omitempty"`
-	ResponseJSONSchema *jsonschema.Schema `json:"response_json_schema,omitempty"`
-	SystemPrompt       string             `json:"system_prompt,omitempty"`
-	Messages           []Message          `json:"messages"`
+	Model          string             `json:"model,omitempty"` // Optional model override
+	ResponseSchema *jsonschema.Schema `json:"response_schema,omitempty"`
+	SystemPrompt   string             `json:"system_prompt,omitempty"`
+	Messages       []Message          `json:"messages"`
 }
 
 // Message represents a single message in the conversation

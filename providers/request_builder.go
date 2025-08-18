@@ -1,16 +1,12 @@
 package providers
 
-import (
-	"encoding/json"
-	"github.com/invopop/jsonschema"
-)
+import "github.com/modelcontextprotocol/go-sdk/jsonschema"
 
 // RequestBuilder helps construct Request objects
 type RequestBuilder struct {
-	structuredResponseSchema []byte
-	structuredResponse       *jsonschema.Schema
-	systemPrompt             string
-	messages                 []Message
+	responseSchema *jsonschema.Schema
+	systemPrompt   string
+	messages       []Message
 }
 
 // NewRequestBuilder creates a new request builder
@@ -51,25 +47,16 @@ func (rb *RequestBuilder) WithSystemPrompt(prompt string) *RequestBuilder {
 }
 
 // WithResponseSchema sets the structured response schema
-func (rb *RequestBuilder) WithResponseSchema(responseSchema *jsonschema.Schema) *RequestBuilder {
-	rb.structuredResponse = responseSchema
-
-	jsonSchema, err := json.MarshalIndent(responseSchema, "", "  ")
-	if err != nil {
-		return rb
-	}
-
-	rb.structuredResponseSchema = jsonSchema
-
+func (rb *RequestBuilder) WithResponseSchema(schema *jsonschema.Schema) *RequestBuilder {
+	rb.responseSchema = schema
 	return rb
 }
 
 // Build creates the final Request object
 func (rb *RequestBuilder) Build() *Request {
 	return &Request{
-		Messages:           rb.messages,
-		ResponseSchema:     rb.structuredResponseSchema,
-		ResponseJSONSchema: rb.structuredResponse,
-		SystemPrompt:       rb.systemPrompt,
+		Messages:       rb.messages,
+		ResponseSchema: rb.responseSchema,
+		SystemPrompt:   rb.systemPrompt,
 	}
 }

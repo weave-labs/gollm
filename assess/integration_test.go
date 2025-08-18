@@ -74,36 +74,30 @@ func TestJSONValidation(t *testing.T) {
 			BatchTimeout: 5 * time.Minute,
 		})
 
-	// Generate schema from struct
-	schema, err := gollm.GenerateJSONSchema(SOLIDResponse{})
-	if err != nil {
-		t.Fatalf("Failed to generate JSON schema: %v", err)
-	}
-
 	// Test JSON response with schema validation
-	test.AddCase("json_solid_principles",
-		fmt.Sprintf(`Please provide the SOLID principles and examples.
-		Format your response as a JSON object that adheres to this schema:
-		%s
+	tc := SetExpectedSchema[SOLIDResponse](test.AddCase("json_solid_principles",
+		`Please provide the SOLID principles and examples.
+		Format your response as a JSON object with:
+		- principles: array of strings, each containing one SOLID principle
+		- examples: array of strings, each containing a practical example
 		
 		The principles array should contain each SOLID principle as a simple string.
 		The examples array should contain practical examples as simple one-line strings.
-		Do not include objects or complex types in the arrays.`, string(schema))).
+		Do not include objects or complex types in the arrays.`).
 		WithTimeout(60*time.Second).
-		WithOption("max_tokens", 2000).
-		ExpectSchema(schema).
-		Validate(func(response string) error {
-			var data SOLIDResponse
-			if err := json.Unmarshal([]byte(response), &data); err != nil {
-				return fmt.Errorf("invalid JSON response: %w", err)
-			}
+		WithOption("max_tokens", 2000))
+	tc.Validate(func(response string) error {
+		var data SOLIDResponse
+		if err := json.Unmarshal([]byte(response), &data); err != nil {
+			return fmt.Errorf("invalid JSON response: %w", err)
+		}
 
-			if err := gollm.Validate(&data); err != nil {
-				return fmt.Errorf("validation failed: %w", err)
-			}
+		if err := gollm.Validate(&data); err != nil {
+			return fmt.Errorf("validation failed: %w", err)
+		}
 
-			return nil
-		})
+		return nil
+	})
 
 	ctx := context.Background()
 	test.RunBatch(ctx)

@@ -1,0 +1,11 @@
+name: "test"
+
+on:
+  pull_request:
+
+jobs:
+  go-test:
+    uses: weave-labs/ci/.github/workflows/go-test.yaml@main
+    secrets:
+      APP_ID: ${{ secrets.STITCH_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.STITCH_PRIVATE_KEY }}

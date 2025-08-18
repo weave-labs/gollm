@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonschema"
+
+	"github.com/weave-labs/gollm/internal/models"
+
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
-	"github.com/weave-labs/gollm/internal/models"
 )
 
 // Gemini-specific parameter keys
@@ -39,7 +42,7 @@ type GeminiProvider struct {
 
 // NewGeminiProvider creates a new Google Gemini API provider instance.
 func NewGeminiProvider(apiKey, model string, extraHeaders map[string]string) *GeminiProvider {
-	provider := &GeminiProvider{
+	p := &GeminiProvider{
 		apiKey:       apiKey,
 		model:        model,
 		extraHeaders: make(map[string]string),
@@ -48,10 +51,12 @@ func NewGeminiProvider(apiKey, model string, extraHeaders map[string]string) *Ge
 	}
 
 	for k, v := range extraHeaders {
-		provider.extraHeaders[k] = v
+		p.extraHeaders[k] = v
 	}
 
-	return provider
+	// Register capabilities based on model
+	p.registerCapabilities()
+	return p
 }
 
 // SetLogger configures the logger for the Gemini provider.
@@ -84,6 +89,132 @@ func (p *GeminiProvider) SetDefaultOptions(cfg *config.Config) {
 // Name returns "google" as the provider identifier.
 func (p *GeminiProvider) Name() string {
 	return "google"
+}
+
+// registerCapabilities registers capabilities for all known Google Gemini models
+func (p *GeminiProvider) registerCapabilities() {
+	registry := GetRegistry()
+
+	// Define all known Gemini models
+	allModels := []string{
+		// Gemini 2.5 models
+		"gemini-2.5-pro",
+		"gemini-2.5-flash",
+		"gemini-2.5-flash-lite",
+
+		// Gemini 2.0 models
+		"gemini-2.0-pro",
+		"gemini-2.0-flash",
+		"gemini-2.0-flash-lite",
+
+		// Gemini 1.5 models
+		"gemini-1.5-pro",
+		"gemini-1.5-pro-latest",
+		"gemini-1.5-flash",
+		"gemini-1.5-flash-latest",
+		"gemini-1.5-flash-8b",
+		"gemini-1.5-flash-8b-latest",
+
+		// Gemini 1.0 models
+		"gemini-1.0-pro",
+		"gemini-1.0-pro-latest",
+		"gemini-1.0-pro-vision",
+		"gemini-1.0-pro-vision-latest",
+
+		// Legacy names
+		"gemini-pro",
+		"gemini-pro-vision",
+		"gemini-flash",
+	}
+
+	// Models that support structured responses
+	structuredResponseModels := []string{
+		"gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
+		"gemini-2.0-pro", "gemini-2.0-flash", "gemini-2.0-flash-lite",
+		"gemini-1.5-pro", "gemini-1.5-pro-latest", "gemini-1.5-flash", "gemini-1.5-flash-latest",
+	}
+
+	// Models that support function calling
+	functionCallingModels := []string{
+		"gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
+		"gemini-2.0-pro", "gemini-2.0-flash", "gemini-2.0-flash-lite",
+		"gemini-1.5-pro", "gemini-1.5-pro-latest", "gemini-1.5-flash", "gemini-1.5-flash-latest",
+		"gemini-1.0-pro", "gemini-1.0-pro-latest",
+	}
+
+	// Models that support vision
+	visionModels := []string{
+		"gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
+		"gemini-2.0-pro", "gemini-2.0-flash", "gemini-2.0-flash-lite",
+		"gemini-1.5-pro", "gemini-1.5-pro-latest", "gemini-1.5-flash", "gemini-1.5-flash-latest",
+		"gemini-1.0-pro-vision", "gemini-1.0-pro-vision-latest",
+		"gemini-pro-vision",
+	}
+
+	for _, model := range allModels {
+		// Check if model supports structured response
+		if contains(structuredResponseModels, model) {
+			registry.Register(ProviderGemini, model, CapStructuredResponse, StructuredResponseConfig{
+				RequiresToolUse:  false,
+				MaxSchemaDepth:   10,
+				SupportedFormats: []string{"json"},
+				RequiresJSONMode: false,
+			})
+		}
+
+		// Check if model supports function calling
+		if contains(functionCallingModels, model) {
+			registry.Register(ProviderGemini, model, CapFunctionCalling, FunctionCallingConfig{
+				MaxFunctions:      64,
+				SupportsParallel:  true,
+				MaxParallelCalls:  5,
+				RequiresToolRole:  false,
+				SupportsStreaming: true,
+			})
+		}
+
+		// Check if model supports vision
+		if contains(visionModels, model) {
+			registry.Register(ProviderGemini, model, CapVision, VisionConfig{
+				MaxImageSize:        20 * 1024 * 1024, // 20MB
+				SupportedFormats:    []string{"jpeg", "png", "gif", "webp"},
+				MaxImagesPerRequest: 16,
+			})
+		}
+
+		// All Gemini models support streaming
+		registry.Register(ProviderGemini, model, CapStreaming, StreamingConfig{
+			SupportsSSE:    true,
+			BufferSize:     4096,
+			ChunkDelimiter: "data: ",
+			SupportsUsage:  true,
+		})
+
+		// System prompt support for all models
+		registry.Register(ProviderGemini, model, CapSystemPrompt, SystemPromptConfig{
+			MaxLength:        32768,
+			SupportsMultiple: false,
+		})
+	}
+}
+
+// Helper function to check if a slice contains a string
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
+// HasCapability checks if a capability is supported
+func (p *GeminiProvider) HasCapability(capability Capability, model string) bool {
+	targetModel := p.model
+	if model != "" {
+		targetModel = model
+	}
+	return GetRegistry().HasCapability(ProviderGemini, targetModel, capability)
 }
 
 // Endpoint returns the Google Gemini API endpoint URL.
@@ -127,6 +258,19 @@ func (p *GeminiProvider) SetExtraHeaders(extraHeaders map[string]string) {
 
 // PrepareRequest prepares a request using the new unified Request structure.
 func (p *GeminiProvider) PrepareRequest(req *Request, options map[string]any) ([]byte, error) {
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
+	}
+
+	// Update model for endpoint generation
+	originalModel := p.model
+	p.model = model
+	defer func() { p.model = originalModel }()
+
 	requestBody := p.initializeRequestBody()
 
 	systemPrompt := p.extractSystemPromptFromRequest(req, options)
@@ -154,7 +298,15 @@ func (p *GeminiProvider) PrepareRequest(req *Request, options map[string]any) ([
 
 // PrepareStreamRequest prepares a streaming request using the new unified Request structure.
 func (p *GeminiProvider) PrepareStreamRequest(req *Request, options map[string]any) ([]byte, error) {
-	if !p.SupportsStreaming() {
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
+	}
+
+	if !p.HasCapability(CapStreaming, model) {
 		return nil, errors.New("streaming is not supported by this provider")
 	}
 
@@ -210,17 +362,30 @@ func (p *GeminiProvider) ParseResponse(body []byte) (*Response, error) {
 
 // ParseStreamResponse parses streaming response chunks from the Gemini API.
 func (p *GeminiProvider) ParseStreamResponse(chunk []byte) (*Response, error) {
+	// Handle SSE format - remove "data: " prefix if present
 	dataStr := strings.TrimPrefix(string(chunk), "data: ")
 
+	// Skip empty chunks or [DONE] markers
 	if strings.TrimSpace(dataStr) == "" || strings.TrimSpace(dataStr) == "[DONE]" {
 		return nil, errors.New("skip chunk")
 	}
 
 	var resp geminiResponse
 	if err := json.Unmarshal([]byte(dataStr), &resp); err != nil {
-		return nil, fmt.Errorf("malformed response: %w", err)
+		// Skip malformed chunks
+		return nil, errors.New("skip chunk")
 	}
 
+	// If usage metadata is present (possibly in the final chunk), return a Response with usage info
+	if resp.UsageMetadata != nil {
+		um := resp.UsageMetadata
+		usageResp := &Response{
+			Usage: NewUsage(um.PromptTokenCount, um.CachedContentTokenCount, um.CandidatesTokenCount, 0, 0),
+		}
+		return usageResp, nil
+	}
+
+	// If no candidates or parts, skip this chunk
 	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
 		return nil, errors.New("skip chunk")
 	}
@@ -241,20 +406,9 @@ func (p *GeminiProvider) ParseStreamResponse(chunk []byte) (*Response, error) {
 		return nil, errors.New("skip chunk")
 	}
 
-	usage := &Usage{}
-	if resp.UsageMetadata != nil {
-		usage = NewUsage(
-			resp.UsageMetadata.PromptTokenCount,
-			resp.UsageMetadata.CachedContentTokenCount,
-			resp.UsageMetadata.CandidatesTokenCount,
-			0,
-			0)
-	}
-
 	return &Response{
 		Role:    "assistant",
 		Content: Text{Value: finalText.String()},
-		Usage:   usage,
 	}, nil
 }
 
@@ -318,23 +472,23 @@ func (p *GeminiProvider) handleToolsForRequest(requestBody map[string]any, optio
 	}
 }
 
-func (p *GeminiProvider) addStructuredResponseToRequest(requestBody map[string]any, responseSchema []byte) error {
-	if responseSchema == nil {
+func (p *GeminiProvider) addStructuredResponseToRequest(requestBody map[string]any, schema *jsonschema.Schema) error {
+	if schema == nil {
 		return nil
 	}
 
-	var schemaMap map[string]any
-	if err := json.Unmarshal(responseSchema, &schemaMap); err != nil {
-		return fmt.Errorf("failed to unmarshal response schema: %w", err)
-	}
+	// schemaJSON, err := schema.MarshalJSON()
+	// if err != nil {
+	//	return fmt.Errorf("failed to marshal response schema: %w", err)
+	// }
 
 	if genConfig, ok := requestBody["generationConfig"].(map[string]any); ok {
 		genConfig["responseMimeType"] = "application/json"
-		genConfig["responseSchema"] = schemaMap
+		genConfig["responseSchema"] = schema
 	} else {
 		requestBody["generationConfig"] = map[string]any{
 			"responseMimeType": "application/json",
-			"responseSchema":   schemaMap,
+			"responseSchema":   schema,
 		}
 	}
 
@@ -476,15 +630,12 @@ func (p *GeminiProvider) formatFunctionCall(functionCall map[string]any) string 
 	return fmt.Sprintf(`{"function_call": {"name": %q, "arguments": %s}}`, name, argsJSON)
 }
 
-// SupportsStreaming returns true as all Google Gemini models support streaming.
-func (p *GeminiProvider) SupportsStreaming() bool {
-	return true
-}
+// Legacy method - uses new capability system internally.
 
-// SupportsStructuredResponse returns true for Google Gemini models that support structured output.
-// Supported models: gemini-2.5-pro, gemini-2.5-flash, gemini-2.5-flash-lite,
-// gemini-2.0-pro, gemini-2.0-flash-lite, gemini-2.0-flash
-func (p *GeminiProvider) SupportsStructuredResponse() bool {
+// Legacy method - uses new capability system internally.
+
+// modelSupportsStructuredResponse checks if the current model supports structured responses
+func (p *GeminiProvider) modelSupportsStructuredResponse() bool {
 	switch p.model {
 	case "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
 		"gemini-2.0-pro", "gemini-2.0-flash-lite", "gemini-2.0-flash":
@@ -494,19 +645,7 @@ func (p *GeminiProvider) SupportsStructuredResponse() bool {
 	}
 }
 
-// SupportsFunctionCalling returns true for Google Gemini models that support function calling.
-// Supported models: gemini-2.5-pro, gemini-2.5-flash, gemini-2.5-flash-lite,
-// gemini-2.0-pro, gemini-2.0-flash-lite, gemini-2.0-flash, gemini-1.5-pro, gemini-1.5-flash
-func (p *GeminiProvider) SupportsFunctionCalling() bool {
-	switch p.model {
-	case "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
-		"gemini-2.0-pro", "gemini-2.0-flash-lite", "gemini-2.0-flash",
-		"gemini-1.5-pro", "gemini-1.5-flash":
-		return true
-	default:
-		return false
-	}
-}
+// Legacy method - uses new capability system internally.
 
 // Response types for Gemini API
 //

@@ -37,7 +37,7 @@ type AnthropicProvider struct {
 // NewAnthropicProvider creates a new Anthropic provider instance.
 // It initializes the provider with the given API key, model, and optional headers.
 func NewAnthropicProvider(apiKey, model string, extraHeaders map[string]string) *AnthropicProvider {
-	provider := &AnthropicProvider{
+	p := &AnthropicProvider{
 		apiKey:       apiKey,
 		model:        model,
 		extraHeaders: make(map[string]string),
@@ -46,14 +46,16 @@ func NewAnthropicProvider(apiKey, model string, extraHeaders map[string]string) 
 	}
 
 	for k, v := range extraHeaders {
-		provider.extraHeaders[k] = v
+		p.extraHeaders[k] = v
 	}
 
-	if _, exists := provider.extraHeaders["anthropic-beta"]; !exists {
-		provider.extraHeaders["anthropic-beta"] = "prompt-caching-2024-07-31"
+	if _, exists := p.extraHeaders["anthropic-beta"]; !exists {
+		p.extraHeaders["anthropic-beta"] = "prompt-caching-2024-07-31"
 	}
 
-	return provider
+	// Register capabilities based on model
+	p.registerCapabilities()
+	return p
 }
 
 // SetLogger configures the logger for the Anthropic provider.
@@ -88,26 +90,108 @@ func (p *AnthropicProvider) Name() string {
 	return "anthropic"
 }
 
+// registerCapabilities registers capabilities for all known Anthropic models
+func (p *AnthropicProvider) registerCapabilities() {
+	registry := GetRegistry()
+
+	// Define all known Anthropic Claude models
+	allModels := []string{
+		// Claude 3.5 models
+		"claude-3-5-sonnet-20241022",
+		"claude-3-5-sonnet-20240620",
+		"claude-3-5-haiku-20241022",
+
+		// Claude 3 models
+		"claude-3-opus-20240229",
+		"claude-3-sonnet-20240229",
+		"claude-3-haiku-20240307",
+
+		// Legacy Claude models
+		"claude-2.1",
+		"claude-2.0",
+		"claude-instant-1.2",
+
+		// Generic model names (latest)
+		"claude-3-5-sonnet",
+		"claude-3-5-haiku",
+		"claude-3-opus",
+		"claude-3-sonnet",
+		"claude-3-haiku",
+	}
+
+	for _, model := range allModels {
+		// All Claude models support structured responses
+		registry.Register(ProviderAnthropic, model, CapStructuredResponse, StructuredResponseConfig{
+			RequiresToolUse:  false,
+			MaxSchemaDepth:   15,
+			SupportedFormats: []string{"json"},
+			SystemPromptHint: "You must respond with a JSON object that strictly adheres to this schema",
+			RequiresJSONMode: false,
+		})
+
+		// All Claude models support function calling
+		registry.Register(ProviderAnthropic, model, CapFunctionCalling, FunctionCallingConfig{
+			MaxFunctions:      64,
+			SupportsParallel:  true,
+			MaxParallelCalls:  10,
+			RequiresToolRole:  false,
+			SupportsStreaming: true,
+		})
+
+		// All Claude models support streaming
+		registry.Register(ProviderAnthropic, model, CapStreaming, StreamingConfig{
+			SupportsSSE:    true,
+			BufferSize:     4096,
+			ChunkDelimiter: "data: ",
+			SupportsUsage:  true,
+		})
+
+		// Claude 3+ models support caching (legacy models have limited support)
+		if strings.Contains(model, "claude-3") {
+			registry.Register(ProviderAnthropic, model, CapCaching, CachingConfig{
+				MaxCacheSize:     1024 * 1024, // 1MB
+				CacheTTLSeconds:  3600,        // 1 hour
+				CacheKeyStrategy: "ephemeral",
+			})
+		} else {
+			// Legacy models have basic caching
+			registry.Register(ProviderAnthropic, model, CapCaching, CachingConfig{
+				MaxCacheSize:     512 * 1024, // 512KB
+				CacheTTLSeconds:  1800,       // 30 minutes
+				CacheKeyStrategy: "ephemeral",
+			})
+		}
+
+		// Vision capability for Claude 3+ models
+		if strings.Contains(model, "claude-3") {
+			registry.Register(ProviderAnthropic, model, CapVision, VisionConfig{
+				MaxImageSize:        5 * 1024 * 1024, // 5MB
+				SupportedFormats:    []string{"jpeg", "png", "gif", "webp"},
+				MaxImagesPerRequest: 20,
+			})
+		}
+
+		// System prompt support for all models
+		registry.Register(ProviderAnthropic, model, CapSystemPrompt, SystemPromptConfig{
+			MaxLength:        32768,
+			SupportsMultiple: true,
+		})
+	}
+}
+
+// HasCapability checks if a capability is supported
+func (p *AnthropicProvider) HasCapability(capability Capability, model string) bool {
+	targetModel := p.model
+	if model != "" {
+		targetModel = model
+	}
+	return GetRegistry().HasCapability(ProviderAnthropic, targetModel, capability)
+}
+
 // Endpoint returns the Anthropic API endpoint URL.
 // For API version 2024-02-15, this is "https://api.anthropic.com/v1/messages".
 func (p *AnthropicProvider) Endpoint() string {
 	return "https://api.anthropic.com/v1/messages"
-}
-
-// SupportsStructuredResponse indicates that Anthropic supports structured output
-// through its system prompts and response formatting capabilities.
-func (p *AnthropicProvider) SupportsStructuredResponse() bool {
-	return true
-}
-
-// SupportsStreaming indicates whether streaming is supported
-func (p *AnthropicProvider) SupportsStreaming() bool {
-	return true
-}
-
-// SupportsFunctionCalling indicates if the provider supports function calling
-func (p *AnthropicProvider) SupportsFunctionCalling() bool {
-	return true
 }
 
 // Headers return the required HTTP headers for Anthropic API requests.
@@ -128,7 +212,15 @@ func (p *AnthropicProvider) Headers() map[string]string {
 
 // PrepareRequest creates the request body for an Anthropic API call
 func (p *AnthropicProvider) PrepareRequest(req *Request, options map[string]any) ([]byte, error) {
-	requestBody := p.initializeRequestBody()
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
+	}
+
+	requestBody := p.initializeRequestBodyWithModel(model)
 
 	systemPrompt := p.extractSystemPromptFromRequest(req, options)
 	systemPrompt = p.handleToolsForRequest(requestBody, systemPrompt, options)
@@ -136,7 +228,7 @@ func (p *AnthropicProvider) PrepareRequest(req *Request, options map[string]any)
 
 	p.addMessagesToRequestBody(requestBody, req.Messages, options)
 
-	if req.ResponseSchema != nil && p.SupportsStructuredResponse() {
+	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
 		err := p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 		if err != nil {
 			return nil, fmt.Errorf("failed to add structured response: %w", err)
@@ -154,10 +246,18 @@ func (p *AnthropicProvider) PrepareRequest(req *Request, options map[string]any)
 
 // PrepareStreamRequest creates a request body for streaming API calls
 func (p *AnthropicProvider) PrepareStreamRequest(req *Request, options map[string]any) ([]byte, error) {
-	if !p.SupportsStreaming() {
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
+	}
+
+	if !p.HasCapability(CapStreaming, model) {
 		return nil, errors.New("streaming is not supported by this provider")
 	}
-	requestBody := p.initializeRequestBody()
+	requestBody := p.initializeRequestBodyWithModel(model)
 	requestBody[anthropicKeyStream] = true
 
 	systemPrompt := p.extractSystemPromptFromRequest(req, options)
@@ -166,7 +266,7 @@ func (p *AnthropicProvider) PrepareStreamRequest(req *Request, options map[strin
 
 	p.addMessagesToRequestBody(requestBody, req.Messages, options)
 
-	if req.ResponseSchema != nil && p.SupportsStructuredResponse() {
+	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
 		err := p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 		if err != nil {
 			return nil, fmt.Errorf("failed to add structured response: %w", err)
@@ -293,10 +393,10 @@ func (p *AnthropicProvider) SetExtraHeaders(extraHeaders map[string]string) {
 	p.extraHeaders = extraHeaders
 }
 
-// initializeRequestBody creates the base request structure
-func (p *AnthropicProvider) initializeRequestBody() map[string]any {
+// initializeRequestBodyWithModel creates the base request structure with specified model
+func (p *AnthropicProvider) initializeRequestBodyWithModel(model string) map[string]any {
 	return map[string]any{
-		"model":               p.model,
+		"model":               model,
 		anthropicKeyMaxTokens: p.options[anthropicKeyMaxTokens],
 		"system":              []map[string]any{},
 		"messages":            []map[string]any{},
