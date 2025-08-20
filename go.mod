@@ -1,6 +1,6 @@
 module github.com/weave-labs/gollm
 
-go 1.23.0
+go 1.24
 
 toolchain go1.24.1
 
@@ -10,6 +10,7 @@ require (
 	github.com/invopop/jsonschema v0.13.0
 	github.com/modelcontextprotocol/go-sdk v0.2.0
 	github.com/pkoukk/tiktoken-go v0.1.7
+	github.com/puzpuzpuz/xsync/v4 v4.1.0
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/time v0.11.0
 )

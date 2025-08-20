@@ -60,13 +60,18 @@ func NewOpenRouterProvider(apiKey, model string, extraHeaders map[string]string)
 	if extraHeaders == nil {
 		extraHeaders = make(map[string]string)
 	}
-	return &OpenRouterProvider{
+
+	p := &OpenRouterProvider{
 		apiKey:       apiKey,
 		model:        model,
 		extraHeaders: extraHeaders,
 		options:      make(map[string]any),
 		logger:       logging.NewLogger(logging.LogLevelInfo),
 	}
+
+	// Register capabilities based on model
+	p.registerCapabilities()
+	return p
 }
 
 // SetLogger configures the logger for the OpenRouter provider.
@@ -77,6 +82,78 @@ func (p *OpenRouterProvider) SetLogger(logger logging.Logger) {
 // Name returns the identifier for this provider ("openrouter").
 func (p *OpenRouterProvider) Name() string {
 	return "openrouter"
+}
+
+// registerCapabilities registers capabilities for all known OpenRouter models
+func (p *OpenRouterProvider) registerCapabilities() {
+	registry := GetRegistry()
+
+	// Get all structured response models and function calling models
+	structuredResponseModels := p.getStructuredResponseModels()
+	functionCallingModels := p.getFunctionCallingModels()
+
+	// Register capabilities for all models we know about
+	allModels := make(map[string]bool)
+	for _, model := range structuredResponseModels {
+		allModels[model] = true
+	}
+	for _, model := range functionCallingModels {
+		allModels[model] = true
+	}
+
+	// Add some common models that might not be in the above lists
+	commonModels := []string{
+		"openrouter/auto",
+		"openai/gpt-4", "openai/gpt-3.5-turbo",
+		"anthropic/claude-3-opus", "anthropic/claude-3-sonnet", "anthropic/claude-3-haiku",
+		"meta-llama/llama-3-70b-instruct", "meta-llama/llama-3-8b-instruct",
+		"mistralai/mistral-7b-instruct", "mistralai/mixtral-8x7b-instruct",
+		"google/gemini-pro", "cohere/command-r-plus",
+	}
+	for _, model := range commonModels {
+		allModels[model] = true
+	}
+
+	// Register capabilities for all models
+	for model := range allModels {
+		// Check if model supports structured response
+		if slices.Contains(structuredResponseModels, model) {
+			registry.Register(ProviderOpenRouter, model, CapStructuredResponse, StructuredResponseConfig{
+				RequiresToolUse:  false,
+				MaxSchemaDepth:   10,
+				SupportedFormats: []string{"json_schema"},
+				RequiresJSONMode: false,
+			})
+		}
+
+		// Check if model supports function calling
+		if slices.Contains(functionCallingModels, model) {
+			registry.Register(ProviderOpenRouter, model, CapFunctionCalling, FunctionCallingConfig{
+				MaxFunctions:      128,
+				SupportsParallel:  true,
+				MaxParallelCalls:  10,
+				RequiresToolRole:  false,
+				SupportsStreaming: true,
+			})
+		}
+
+		// All OpenRouter models support streaming
+		registry.Register(ProviderOpenRouter, model, CapStreaming, StreamingConfig{
+			SupportsSSE:    true,
+			BufferSize:     4096,
+			ChunkDelimiter: "data: ",
+			SupportsUsage:  true,
+		})
+	}
+}
+
+// HasCapability checks if a capability is supported
+func (p *OpenRouterProvider) HasCapability(capability Capability, model string) bool {
+	targetModel := p.model
+	if model != "" {
+		targetModel = model
+	}
+	return GetRegistry().HasCapability(ProviderOpenRouter, targetModel, capability)
 }
 
 // Endpoint returns the OpenRouter API endpoint URL for chat completions.
@@ -123,20 +200,13 @@ func (p *OpenRouterProvider) SetDefaultOptions(cfg *config.Config) {
 	}
 }
 
-// SupportsStreaming indicates whether this provider supports streaming responses.
-// All OpenRouter models support streaming.
-func (p *OpenRouterProvider) SupportsStreaming() bool {
-	return true
-}
-
-// SupportsStructuredResponse indicates whether this provider supports structured response (JSON schema).
-// OpenRouter supports structured responses for specific models.
-//
-// registry.
-//
-//nolint:funlen // This function is long due to the extensive list of models, it will be fixed with the new capability
-func (p *OpenRouterProvider) SupportsStructuredResponse() bool {
-	models := []string{
+// getStructuredResponseModels returns all models that support structured responses
+func (p *OpenRouterProvider) getStructuredResponseModels() []string {
+	return []string{
+		"anthropic/claude-3-5-sonnet",
+		"anthropic/claude-3-opus",
+		"anthropic/claude-3-sonnet",
+		"anthropic/claude-3-haiku",
 		"mistralai/mistral-medium-3.1",
 		"openai/gpt-5-chat",
 		"openai/gpt-5",
@@ -280,18 +350,13 @@ func (p *OpenRouterProvider) SupportsStructuredResponse() bool {
 		"openai/gpt-3.5-turbo",
 		"openai/gpt-4-0314",
 	}
-
-	return slices.Contains(models, p.model)
 }
 
-// SupportsFunctionCalling indicates whether this provider supports function calling.
-// OpenRouter supports function calling for specific models.
-//
-// registry.
-//
-//nolint:funlen // This function is long due to the extensive list of models, it will be fixed with the new capability
-func (p *OpenRouterProvider) SupportsFunctionCalling() bool {
-	models := []string{
+// Legacy method - uses new capability system internally.
+
+// getFunctionCallingModels returns all models that support function calling
+func (p *OpenRouterProvider) getFunctionCallingModels() []string {
+	return []string{
 		"mistralai/mistral-medium-3.1",
 		"z-ai/glm-4.5v",
 		"ai21/jamba-mini-1.7",
@@ -393,7 +458,7 @@ func (p *OpenRouterProvider) SupportsFunctionCalling() bool {
 		"thedrummer/unslopnemo-12b",
 		"anthropic/claude-3.5-haiku-20241022",
 		"anthropic/claude-3.5-haiku",
-		"anthropic/claude-3.5-sonnet",
+		"anthropic/claude-3-5-sonnet",
 		"mistralai/ministral-8b",
 		"nvidia/llama-3.1-nemotron-70b-instruct",
 		"google/gemini-flash-1.5-8b",
@@ -446,8 +511,6 @@ func (p *OpenRouterProvider) SupportsFunctionCalling() bool {
 		"openai/gpt-3.5-turbo",
 		"openai/gpt-4-0314",
 	}
-
-	return slices.Contains(models, p.model)
 }
 
 // Headers return the HTTP headers required for OpenRouter API requests.
@@ -471,11 +534,19 @@ func (p *OpenRouterProvider) Headers() map[string]string {
 
 // PrepareRequest creates a chat completion request for the OpenRouter API.
 func (p *OpenRouterProvider) PrepareRequest(req *Request, options map[string]any) ([]byte, error) {
-	requestBody := p.initializeRequestBody(options)
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
+	}
+
+	requestBody := p.initializeRequestBodyWithModel(model, options)
 	p.handleModelRouting(requestBody)
 	p.handleProviderPreferences(requestBody)
 	p.addMessages(requestBody, req)
-	p.handleStructuredResponse(requestBody, req)
+	p.handleStructuredResponse(requestBody, req, model)
 	p.handleToolsAndOptions(requestBody)
 
 	data, err := json.Marshal(requestBody)
@@ -485,14 +556,14 @@ func (p *OpenRouterProvider) PrepareRequest(req *Request, options map[string]any
 	return data, nil
 }
 
-// initializeRequestBody creates the base request body with options and model
-func (p *OpenRouterProvider) initializeRequestBody(options map[string]any) map[string]any {
+// initializeRequestBodyWithModel creates the base request body with specified model
+func (p *OpenRouterProvider) initializeRequestBodyWithModel(model string, options map[string]any) map[string]any {
 	requestBody := map[string]any{}
 	for k, v := range options {
 		requestBody[k] = v
 	}
 
-	requestBody["model"] = p.model
+	requestBody["model"] = model
 
 	for k, v := range p.options {
 		if _, exists := requestBody[k]; !exists {
@@ -562,8 +633,8 @@ func (p *OpenRouterProvider) convertMessage(msg *Message) map[string]any {
 }
 
 // handleStructuredResponse adds structured response schema if supported
-func (p *OpenRouterProvider) handleStructuredResponse(requestBody map[string]any, req *Request) {
-	if req.ResponseSchema != nil && p.SupportsStructuredResponse() {
+func (p *OpenRouterProvider) handleStructuredResponse(requestBody map[string]any, req *Request, model string) {
+	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
 		requestBody["response_format"] = map[string]any{
 			"type":   "json_object",
 			"schema": req.ResponseSchema,
@@ -784,7 +855,15 @@ func (p *OpenRouterProvider) SetExtraHeaders(extraHeaders map[string]string) {
 
 // PrepareStreamRequest creates a streaming request for the OpenRouter API.
 func (p *OpenRouterProvider) PrepareStreamRequest(req *Request, options map[string]any) ([]byte, error) {
-	if !p.SupportsStreaming() {
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
+	}
+
+	if !p.HasCapability(CapStreaming, model) {
 		return nil, errors.New("streaming is not supported by this provider")
 	}
 

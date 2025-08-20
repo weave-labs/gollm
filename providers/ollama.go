@@ -47,18 +47,127 @@ func NewOllamaProvider(_ string, model string, extraHeaders map[string]string) *
 	if extraHeaders == nil {
 		extraHeaders = make(map[string]string)
 	}
-	return &OllamaProvider{
+
+	p := &OllamaProvider{
 		endpoint:     endpoint,
 		model:        model,
 		extraHeaders: extraHeaders,
 		options:      make(map[string]any),
 		logger:       logging.NewLogger(logging.LogLevelInfo),
 	}
+
+	// Register capabilities based on model
+	p.registerCapabilities()
+	return p
 }
 
 // Name returns the identifier for this provider ("ollama").
 func (p *OllamaProvider) Name() string {
 	return "ollama"
+}
+
+// registerCapabilities registers capabilities for all known Ollama models
+func (p *OllamaProvider) registerCapabilities() {
+	registry := GetRegistry()
+
+	// Define common Ollama models (this list is extensive but not exhaustive)
+	allModels := []string{
+		// Llama models
+		"llama3.2", "llama3.2:1b", "llama3.2:3b",
+		"llama3.1", "llama3.1:8b", "llama3.1:70b", "llama3.1:405b",
+		"llama3", "llama3:8b", "llama3:70b",
+		"llama2", "llama2:7b", "llama2:13b", "llama2:70b",
+		"llama2-uncensored", "llama2-chinese",
+
+		// Code Llama models
+		"codellama", "codellama:7b", "codellama:13b", "codellama:34b",
+		"codellama:python", "codellama:instruct",
+
+		// Mistral models
+		"mistral", "mistral:7b", "mistral:instruct",
+		"mistral-openorca", "mistral-nemo",
+		"mixtral", "mixtral:8x7b", "mixtral:8x22b",
+
+		// Gemma models
+		"gemma", "gemma:2b", "gemma:7b",
+		"gemma2", "gemma2:2b", "gemma2:9b", "gemma2:27b",
+
+		// Phi models
+		"phi3", "phi3:mini", "phi3:medium",
+		"phi", "phi:2.7b",
+
+		// Qwen models
+		"qwen", "qwen:4b", "qwen:7b", "qwen:14b", "qwen:32b", "qwen:72b",
+		"qwen2", "qwen2:0.5b", "qwen2:1.5b", "qwen2:7b", "qwen2:72b",
+		"qwen2.5", "qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "qwen2.5:32b",
+		"qwen2.5:72b",
+
+		// Other popular models
+		"falcon", "falcon:7b", "falcon:40b",
+		"vicuna", "vicuna:7b", "vicuna:13b", "vicuna:33b",
+		"orca-mini", "orca2",
+		"dolphin-llama3", "dolphin-mistral",
+		"neural-chat", "starling-lm",
+		"openchat", "zephyr",
+		"wizardlm", "wizardcoder",
+		"yi", "yi:6b", "yi:9b", "yi:34b",
+		"deepseek-coder", "deepseek-llm",
+		"solar", "solar:10.7b",
+		"tinyllama", "tinydolphin",
+		"stablelm2", "starcoder", "starcoder2",
+
+		// Vision models
+		"llava", "llava:7b", "llava:13b", "llava:34b",
+		"bakllava", "moondream",
+
+		// Embedding models
+		"nomic-embed-text", "mxbai-embed-large", "all-minilm",
+
+		// Special/utility models
+		"medllama2", "samantha-mistral", "magicoder",
+		"orca-mini:3b", "orca-mini:7b", "orca-mini:13b", "orca-mini:70b",
+	}
+
+	for _, model := range allModels {
+		// Ollama supports streaming for all models
+		registry.Register(ProviderOllama, model, CapStreaming, StreamingConfig{
+			SupportsSSE:    true,
+			BufferSize:     4096,
+			ChunkDelimiter: "data: ",
+			SupportsUsage:  true,
+		})
+
+		// Vision capability for vision models
+		visionModels := []string{"llava", "llava:7b", "llava:13b", "llava:34b", "bakllava", "moondream"}
+		for _, vm := range visionModels {
+			if strings.Contains(model, vm) || model == vm {
+				registry.Register(ProviderOllama, model, CapVision, VisionConfig{
+					MaxImageSize:        10 * 1024 * 1024,
+					SupportedFormats:    []string{"jpeg", "png", "gif", "webp"},
+					MaxImagesPerRequest: 1,
+				})
+				break
+			}
+		}
+
+		// System prompt support for all models (basic capability)
+		registry.Register(ProviderOllama, model, CapSystemPrompt, SystemPromptConfig{
+			MaxLength:        8192,
+			SupportsMultiple: false,
+		})
+	}
+
+	// Ollama doesn't support structured responses or function calling natively
+	// These capabilities are intentionally not registered
+}
+
+// HasCapability checks if a capability is supported
+func (p *OllamaProvider) HasCapability(capability Capability, model string) bool {
+	targetModel := p.model
+	if model != "" {
+		targetModel = model
+	}
+	return GetRegistry().HasCapability(ProviderOllama, targetModel, capability)
 }
 
 // Endpoint returns the configured Ollama API endpoint URL.
@@ -125,8 +234,16 @@ func (p *OllamaProvider) SetLogger(logger logging.Logger) {
 // PrepareRequest creates the request body for an Ollama API call.
 // It formats the request according to Ollama's API requirements.
 func (p *OllamaProvider) PrepareRequest(req *Request, options map[string]any) ([]byte, error) {
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
+	}
+
 	requestBody := map[string]any{
-		ollamaKeyModel: p.model,
+		ollamaKeyModel: model,
 	}
 
 	// Convert messages to a single prompt for Ollama
@@ -243,21 +360,4 @@ func (p *OllamaProvider) ParseStreamResponse(chunk []byte) (*Response, error) {
 		return nil, errors.New("skip resp")
 	}
 	return &Response{Content: Text{Value: response.Response}}, nil
-}
-
-// SupportsStreaming returns whether the provider supports streaming responses
-func (p *OllamaProvider) SupportsStreaming() bool {
-	return true
-}
-
-// SupportsStructuredResponse indicates whether this provider supports JSON schema validation.
-// Currently, Ollama does not natively support JSON schema validation.
-func (p *OllamaProvider) SupportsStructuredResponse() bool {
-	return false
-}
-
-// SupportsFunctionCalling indicates if the provider supports function calling.
-// Ollama does not support function calling natively.
-func (p *OllamaProvider) SupportsFunctionCalling() bool {
-	return false
 }

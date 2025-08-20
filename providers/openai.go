@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/invopop/jsonschema"
 	"io"
 	"strings"
 
@@ -42,13 +41,18 @@ func NewOpenAIProvider(apiKey, model string, extraHeaders map[string]string) *Op
 	if extraHeaders == nil {
 		extraHeaders = make(map[string]string)
 	}
-	return &OpenAIProvider{
+
+	p := &OpenAIProvider{
 		apiKey:       apiKey,
 		model:        model,
 		extraHeaders: extraHeaders,
 		options:      make(map[string]any),
 		logger:       logging.NewLogger(logging.LogLevelInfo),
 	}
+
+	// Register capabilities with the global registry
+	p.registerCapabilities()
+	return p
 }
 
 // SetLogger configures the logger for the OpenAI provider.
@@ -90,12 +94,20 @@ func (p *OpenAIProvider) SetOption(key string, value any) {
 // SetDefaultOptions configures standard options from the global configuration.
 // This includes temperature, max tokens, and sampling parameters.
 func (p *OpenAIProvider) SetDefaultOptions(cfg *config.Config) {
-	p.SetOption("max_completion_tokens", cfg.MaxCompletionTokens)
-
+	p.SetOption("temperature", cfg.Temperature)
+	p.SetOption(openAIKeyMaxTokens, cfg.MaxTokens)
 	if cfg.Seed != nil {
 		p.SetOption("seed", *cfg.Seed)
 	}
-
+	p.logger.Debug(
+		"Default options set",
+		"temperature",
+		cfg.Temperature,
+		openAIKeyMaxTokens,
+		cfg.MaxTokens,
+		"seed",
+		cfg.Seed,
+	)
 }
 
 // Name returns "openai" as the provider identifier.
@@ -103,16 +115,128 @@ func (p *OpenAIProvider) Name() string {
 	return "openai"
 }
 
+// registerCapabilities registers capabilities for all known OpenAI models
+func (p *OpenAIProvider) registerCapabilities() {
+	registry := GetRegistry()
+
+	// Define all known OpenAI models
+	allModels := []string{
+		// GPT-4o models
+		"gpt-4o", "gpt-4o-mini", "gpt-4o-2024-11-20", "gpt-4o-2024-08-06", "gpt-4o-2024-05-13",
+		"gpt-4o-mini-2024-07-18",
+
+		// GPT-4 Turbo models
+		"gpt-4-turbo", "gpt-4-turbo-2024-04-09", "gpt-4-turbo-preview", "gpt-4-0125-preview",
+		"gpt-4-1106-preview", "gpt-4-turbo-vision-preview",
+
+		// GPT-4 models
+		"gpt-4", "gpt-4-0613", "gpt-4-0314", "gpt-4-vision-preview",
+
+		// GPT-3.5 Turbo models
+		"gpt-3.5-turbo", "gpt-3.5-turbo-0125", "gpt-3.5-turbo-1106", "gpt-3.5-turbo-0613",
+		"gpt-3.5-turbo-16k", "gpt-3.5-turbo-16k-0613",
+
+		// O1 models
+		"o1-preview", "o1-mini", "o1-preview-2024-09-12", "o1-mini-2024-09-12",
+	}
+
+	for _, model := range allModels {
+		// O1 models have limited capabilities
+		if strings.HasPrefix(model, "o1") {
+			// Only register streaming for O1 models
+			registry.Register(ProviderOpenAI, model, CapStreaming, StreamingConfig{
+				SupportsSSE:    true,
+				BufferSize:     4096,
+				ChunkDelimiter: "data: ",
+				SupportsUsage:  false,
+			})
+			continue
+		}
+
+		// GPT-4o models - advanced structured response
+		if strings.HasPrefix(model, "gpt-4o") || strings.HasPrefix(model, "gpt-4-turbo") {
+			registry.Register(ProviderOpenAI, model, CapStructuredResponse, StructuredResponseConfig{
+				RequiresToolUse:  false,
+				MaxSchemaDepth:   15,
+				SupportedFormats: []string{"json", "json_schema"},
+				RequiresJSONMode: true,
+			})
+		} else if strings.HasPrefix(model, "gpt-4") {
+			// Regular GPT-4 models
+			registry.Register(ProviderOpenAI, model, CapStructuredResponse, StructuredResponseConfig{
+				RequiresToolUse:  false,
+				MaxSchemaDepth:   15,
+				SupportedFormats: []string{"json_schema", "json_object"},
+				RequiresJSONMode: true,
+			})
+		} else if strings.HasPrefix(model, "gpt-3.5-turbo") {
+			// GPT-3.5 models - limited structured response support
+			if model == "gpt-3.5-turbo-0125" || model == "gpt-3.5-turbo-1106" {
+				registry.Register(ProviderOpenAI, model, CapStructuredResponse, StructuredResponseConfig{
+					RequiresToolUse:  false,
+					MaxSchemaDepth:   10,
+					SupportedFormats: []string{"json"},
+					RequiresJSONMode: true,
+				})
+			}
+		}
+
+		// Function calling
+		if strings.HasPrefix(model, "gpt-4") {
+			registry.Register(ProviderOpenAI, model, CapFunctionCalling, FunctionCallingConfig{
+				MaxFunctions:      128,
+				SupportsParallel:  true,
+				MaxParallelCalls:  10,
+				SupportsStreaming: true,
+			})
+		} else if strings.HasPrefix(model, "gpt-3.5-turbo") {
+			registry.Register(ProviderOpenAI, model, CapFunctionCalling, FunctionCallingConfig{
+				MaxFunctions:      64,
+				SupportsParallel:  true,
+				MaxParallelCalls:  5,
+				SupportsStreaming: false,
+			})
+		}
+
+		// All OpenAI models support streaming (including O1 which was handled above)
+		if !strings.HasPrefix(model, "o1") {
+			registry.Register(ProviderOpenAI, model, CapStreaming, StreamingConfig{
+				SupportsSSE:    true,
+				BufferSize:     4096,
+				ChunkDelimiter: "data: ",
+				SupportsUsage:  strings.HasPrefix(model, "gpt-4"),
+			})
+		}
+
+		// Vision for specific models
+		visionModels := []string{"gpt-4o", "gpt-4-turbo", "gpt-4-vision"}
+		for _, vm := range visionModels {
+			if strings.HasPrefix(model, vm) {
+				registry.Register(ProviderOpenAI, model, CapVision, VisionConfig{
+					MaxImageSize:        20 * 1024 * 1024,
+					SupportedFormats:    []string{"jpeg", "png", "gif", "webp"},
+					MaxImagesPerRequest: 10,
+					SupportsVideoFrames: strings.Contains(model, "4o"),
+				})
+				break
+			}
+		}
+	}
+}
+
+// HasCapability checks if a capability is supported
+func (p *OpenAIProvider) HasCapability(capability Capability, model string) bool {
+	targetModel := p.model
+	if model != "" {
+		targetModel = model
+	}
+	return GetRegistry().HasCapability(ProviderOpenAI, targetModel, capability)
+}
+
 // Endpoint returns the OpenAI API endpoint URL.
 // For API version 1, this is "https://api.openai.com/v1/chat/completions".
 func (p *OpenAIProvider) Endpoint() string {
 	return "https://api.openai.com/v1/chat/completions"
-}
-
-// SupportsStructuredResponse indicates that OpenAI supports native JSON schema validation
-// through its function calling and JSON mode capabilities.
-func (p *OpenAIProvider) SupportsStructuredResponse() bool {
-	return true
 }
 
 // Headers returns the required HTTP headers for OpenAI API requests.
@@ -136,7 +260,15 @@ func (p *OpenAIProvider) Headers() map[string]string {
 
 // PrepareRequest creates the request body for an OpenAI API call
 func (p *OpenAIProvider) PrepareRequest(req *Request, options map[string]any) ([]byte, error) {
-	requestBody := p.initializeOpenAIRequest()
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
+	}
+
+	requestBody := p.initializeOpenAIRequestWithModel(model)
 
 	// Handle system prompt from Request or options
 	systemPrompt := p.extractSystemPromptFromRequest(req, options)
@@ -151,11 +283,8 @@ func (p *OpenAIProvider) PrepareRequest(req *Request, options map[string]any) ([
 	p.handleToolsForRequest(requestBody, options)
 
 	// Handle structured response schema
-	if req.ResponseJSONSchema != nil && p.SupportsStructuredResponse() {
-		err := p.addStructuredResponseToRequest(requestBody, req.ResponseJSONSchema)
-		if err != nil {
-			return nil, fmt.Errorf("failed to add structured response schema: %w", err)
-		}
+	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
+		p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 	}
 
 	// Add remaining options
@@ -233,23 +362,21 @@ func (p *OpenAIProvider) SetExtraHeaders(extraHeaders map[string]string) {
 	p.logger.Debug("Extra headers set", "headers", extraHeaders)
 }
 
-// SupportsStreaming indicates whether streaming is supported
-func (p *OpenAIProvider) SupportsStreaming() bool {
-	return true
-}
-
-// SupportsFunctionCalling indicates if the provider supports function calling
-func (p *OpenAIProvider) SupportsFunctionCalling() bool {
-	return true
-}
-
 // PrepareStreamRequest creates a request body for streaming API calls
 func (p *OpenAIProvider) PrepareStreamRequest(req *Request, options map[string]any) ([]byte, error) {
-	if !p.SupportsStreaming() {
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
+	}
+
+	if !p.HasCapability(CapStreaming, model) {
 		return nil, errors.New("streaming is not supported by this provider")
 	}
 
-	requestBody := p.initializeOpenAIRequest()
+	requestBody := p.initializeOpenAIRequestWithModel(model)
 	requestBody[openAIKeyStream] = true
 	requestBody["stream_options"] = map[string]bool{"include_usage": true}
 
@@ -266,11 +393,8 @@ func (p *OpenAIProvider) PrepareStreamRequest(req *Request, options map[string]a
 	p.handleToolsForRequest(requestBody, options)
 
 	// Handle structured response schema
-	if req.ResponseJSONSchema != nil && p.SupportsStructuredResponse() {
-		err := p.addStructuredResponseToRequest(requestBody, req.ResponseJSONSchema)
-		if err != nil {
-			return nil, fmt.Errorf("failed to add structured response schema: %w", err)
-		}
+	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
+		p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 	}
 
 	// Add remaining options
@@ -287,12 +411,12 @@ func (p *OpenAIProvider) PrepareStreamRequest(req *Request, options map[string]a
 func (p *OpenAIProvider) ParseStreamResponse(chunk []byte) (*Response, error) {
 	// Skip empty lines
 	if len(bytes.TrimSpace(chunk)) == 0 {
-		return nil, errors.New("skip chunk")
+		return nil, errors.New("empty chunk")
 	}
 
 	// Check for [DONE] marker
 	if bytes.Equal(bytes.TrimSpace(chunk), []byte("[DONE]")) {
-		return nil, errors.New("skip chunk")
+		return nil, io.EOF
 	}
 
 	// Parse the chunk
@@ -303,7 +427,7 @@ func (p *OpenAIProvider) ParseStreamResponse(chunk []byte) (*Response, error) {
 	}
 
 	if len(response.Choices) == 0 {
-		return nil, errors.New("skip chunk")
+		return nil, errors.New("no choices in response")
 	}
 
 	// Handle finish reason
@@ -313,7 +437,7 @@ func (p *OpenAIProvider) ParseStreamResponse(chunk []byte) (*Response, error) {
 
 	// Skip role-only messages
 	if response.Choices[0].Delta.Role != "" && response.Choices[0].Delta.Content == "" {
-		return nil, errors.New("skip chunk")
+		return nil, errors.New("skip token")
 	}
 
 	usage := &Usage{}
@@ -338,10 +462,6 @@ func (p *OpenAIProvider) ParseStreamResponse(chunk []byte) (*Response, error) {
 
 // needsMaxCompletionTokens checks if the model requires max_completion_tokens instead of max_tokens
 func (p *OpenAIProvider) needsMaxCompletionTokens() bool {
-	if strings.HasPrefix(p.model, "gpt-5") {
-		return true
-	}
-
 	if strings.HasPrefix(p.model, "o") {
 		return true
 	}
@@ -353,10 +473,10 @@ func (p *OpenAIProvider) needsMaxCompletionTokens() bool {
 	return false
 }
 
-// initializeOpenAIRequest creates the base request structure
-func (p *OpenAIProvider) initializeOpenAIRequest() map[string]any {
+// initializeOpenAIRequestWithModel creates the base request structure with specified model
+func (p *OpenAIProvider) initializeOpenAIRequestWithModel(model string) map[string]any {
 	return map[string]any{
-		"model":    p.model,
+		"model":    model,
 		"messages": []map[string]any{},
 	}
 }
@@ -477,23 +597,16 @@ func (p *OpenAIProvider) handleToolsForRequest(requestBody map[string]any, optio
 }
 
 // addStructuredResponseToRequest adds structured response schema to the request
-func (p *OpenAIProvider) addStructuredResponseToRequest(requestBody map[string]any, responseJSONSchema *jsonschema.Schema) error {
-
-	//var schemaMap map[string]any
-	//if err := json.Unmarshal(responseSchema, &schemaMap); err != nil {
-	//	return fmt.Errorf("failed to unmarshal response schema: %w", err)
-	//}
-
+func (p *OpenAIProvider) addStructuredResponseToRequest(requestBody map[string]any, schema any) {
+	// For OpenAI, we use response_format with JSON schema
 	requestBody["response_format"] = map[string]any{
 		"type": "json_schema",
 		"json_schema": map[string]any{
 			"name":   "response",
-			"schema": responseJSONSchema,
-			"strict": false,
+			"schema": schema,
+			"strict": true,
 		},
 	}
-
-	return nil
 }
 
 // addRemainingOptions adds any remaining options to the request body

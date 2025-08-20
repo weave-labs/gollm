@@ -11,8 +11,7 @@ type GenerateOption func(*GenerateConfig)
 // The generic type parameter T should be a struct type describing the expected JSON structure.
 func WithStructuredResponse[T any]() GenerateOption {
 	return func(cfg *GenerateConfig) {
-		reflector := StructuredResponseReflector()
-		cfg.StructuredResponse = StripSchemaIDs(reflector.Reflect(*new(T)))
+		cfg.StructuredResponse = StripSchemaIDs(StructuredResponseReflector().Reflect(*new(T)))
 	}
 }
 

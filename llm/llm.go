@@ -7,11 +7,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/invopop/jsonschema"
 	"io"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/jsonschema"
 
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
@@ -118,11 +119,6 @@ func (l *LLMImpl) GetLogger() logging.Logger {
 	return l.logger
 }
 
-// SupportsStreaming checks if the provider supports streaming responses.
-func (l *LLMImpl) SupportsStreaming() bool {
-	return l.Provider.SupportsStreaming()
-}
-
 // Generate produces text based on the given prompt and options.
 func (l *LLMImpl) Generate(ctx context.Context, prompt *Prompt, opts ...GenerateOption) (*providers.Response, error) {
 	generateConfig := &GenerateConfig{}
@@ -139,7 +135,7 @@ func (l *LLMImpl) Generate(ctx context.Context, prompt *Prompt, opts ...Generate
 
 // GenerateStream initiates a streaming response from the LLM.
 func (l *LLMImpl) GenerateStream(ctx context.Context, prompt *Prompt, opts ...GenerateOption) (TokenStream, error) {
-	if !l.SupportsStreaming() {
+	if !l.Provider.HasCapability(providers.CapStreaming, l.config.Model) {
 		return nil, NewLLMError(ErrorTypeUnsupported, "streaming not supported by provider", nil)
 	}
 
@@ -204,9 +200,13 @@ func (l *LLMImpl) GenerateStream(ctx context.Context, prompt *Prompt, opts ...Ge
 }
 
 // generateWithRetries handles standard generation with retry logic
-func (l *LLMImpl) generateWithRetries(ctx context.Context, prompt *Prompt, responseSchema *jsonschema.Schema) (*providers.Response, error) {
+func (l *LLMImpl) generateWithRetries(
+	ctx context.Context,
+	prompt *Prompt,
+	schema *jsonschema.Schema,
+) (*providers.Response, error) {
 	for attempt := 0; attempt <= l.MaxRetries; attempt++ {
-		result, err := l.attemptGenerate(ctx, prompt, responseSchema)
+		result, err := l.attemptGenerate(ctx, prompt, schema)
 		if err == nil {
 			return result, nil
 		}
@@ -236,10 +236,14 @@ func (l *LLMImpl) wait(ctx context.Context) error {
 
 // attemptGenerate makes a single attempt to generate text using the provider.
 // It handles request preparation, API communication, and response processing.
-func (l *LLMImpl) attemptGenerate(ctx context.Context, prompt *Prompt, responseSchema *jsonschema.Schema) (*providers.Response, error) {
+func (l *LLMImpl) attemptGenerate(
+	ctx context.Context,
+	prompt *Prompt,
+	schema *jsonschema.Schema,
+) (*providers.Response, error) {
 	response := &providers.Response{}
 
-	reqBody, err := l.prepareRequestBody(prompt, responseSchema)
+	reqBody, err := l.prepareRequestBody(prompt, schema)
 	if err != nil {
 		return response, NewLLMError(ErrorTypeRequest, "failed to prepare request", err)
 	}
@@ -249,14 +253,14 @@ func (l *LLMImpl) attemptGenerate(ctx context.Context, prompt *Prompt, responseS
 		return response, err
 	}
 
-	if responseSchema != nil {
+	if schema != nil {
 		textContent, ok := response.Content.(providers.Text)
 		if !ok {
 			return nil, NewLLMError(ErrorTypeResponse, "response content is not text", nil)
 		}
 
-		if err := ValidateAgainstSchema(textContent.Value, responseSchema); err != nil {
-			return nil, NewLLMError(ErrorTypeResponse, "response does not match responseSchema", err)
+		if err := ValidateAgainstSchema(textContent.Value, schema); err != nil {
+			return nil, NewLLMError(ErrorTypeResponse, "response does not match schema", err)
 		}
 	}
 
@@ -285,7 +289,7 @@ func (l *LLMImpl) prepareOptions(prompt *Prompt) map[string]any {
 }
 
 // prepareRequestBody prepares the request body using the new provider architecture
-func (l *LLMImpl) prepareRequestBody(prompt *Prompt, responseSchema *jsonschema.Schema) ([]byte, error) {
+func (l *LLMImpl) prepareRequestBody(prompt *Prompt, schema *jsonschema.Schema) ([]byte, error) {
 	options := l.prepareOptions(prompt)
 
 	builder := providers.NewRequestBuilder()
@@ -293,8 +297,8 @@ func (l *LLMImpl) prepareRequestBody(prompt *Prompt, responseSchema *jsonschema.
 		WithMessages(ToMessages(prompt.Messages)).
 		WithPrompt(prompt.Input)
 
-	if responseSchema != nil {
-		builder.WithResponseSchema(responseSchema)
+	if schema != nil {
+		builder.WithResponseSchema(schema)
 	}
 
 	if prompt.SystemPrompt != "" {

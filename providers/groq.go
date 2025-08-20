@@ -41,13 +41,18 @@ func NewGroqProvider(apiKey, model string, extraHeaders map[string]string) *Groq
 	if extraHeaders == nil {
 		extraHeaders = make(map[string]string)
 	}
-	return &GroqProvider{
+
+	p := &GroqProvider{
 		apiKey:       apiKey,
 		model:        model,
 		extraHeaders: extraHeaders,
 		options:      make(map[string]any),
 		logger:       logging.NewLogger(logging.LogLevelInfo),
 	}
+
+	// Register capabilities based on model
+	p.registerCapabilities()
+	return p
 }
 
 // SetLogger configures the logger for the Groq provider.
@@ -59,6 +64,88 @@ func (p *GroqProvider) SetLogger(logger logging.Logger) {
 // Name returns the identifier for this provider ("groq").
 func (p *GroqProvider) Name() string {
 	return "groq"
+}
+
+// registerCapabilities registers capabilities for all known Groq models
+func (p *GroqProvider) registerCapabilities() {
+	registry := GetRegistry()
+
+	// Define all known Groq models
+	allModels := []string{
+		// Llama models
+		"llama-3.1-405b-reasoning",
+		"llama-3.1-70b-versatile",
+		"llama-3.1-8b-instant",
+		"llama3-groq-70b-8192-tool-use-preview",
+		"llama3-groq-8b-8192-tool-use-preview",
+		"llama-3.2-1b-preview",
+		"llama-3.2-3b-preview",
+		"llama-3.2-11b-text-preview",
+		"llama-3.2-90b-text-preview",
+		"llama-guard-3-8b",
+		"llama3-70b-8192",
+		"llama3-8b-8192",
+
+		// Mixtral models
+		"mixtral-8x7b-32768",
+
+		// Gemma models
+		"gemma-7b-it",
+		"gemma2-9b-it",
+
+		// DeepSeek models
+		"deepseek-r1-distill-llama-70b",
+
+		// OpenAI models on Groq
+		"openai/gpt-oss-20b",
+		"openai/gpt-oss-120b",
+
+		// Moonshot models
+		"moonshotai/kimi-k2-instruct",
+
+		// Meta Llama 4 models
+		"meta-llama/llama-4-maverick-17b-128e-instruct",
+		"meta-llama/llama-4-scout-17b-16e-instruct",
+	}
+
+	for _, model := range allModels {
+		// Structured response support - all Groq models
+		registry.Register(ProviderGroq, model, CapStructuredResponse, StructuredResponseConfig{
+			RequiresToolUse:  false,
+			MaxSchemaDepth:   10,
+			SupportedFormats: []string{"json"},
+			RequiresJSONMode: true,
+		})
+
+		// Function calling - most Groq models support it (exclude guard models)
+		if !slices.Contains([]string{"llama-guard-3-8b"}, model) {
+			registry.Register(ProviderGroq, model, CapFunctionCalling, FunctionCallingConfig{
+				MaxFunctions:      100,
+				SupportsParallel:  true,
+				MaxParallelCalls:  10,
+				SupportsStreaming: true,
+			})
+		}
+
+		// Streaming - most models support it
+		if !slices.Contains([]string{"llama-guard-3-8b"}, model) {
+			registry.Register(ProviderGroq, model, CapStreaming, StreamingConfig{
+				SupportsSSE:    true,
+				BufferSize:     4096,
+				ChunkDelimiter: "data: ",
+				SupportsUsage:  false,
+			})
+		}
+	}
+}
+
+// HasCapability checks if a capability is supported
+func (p *GroqProvider) HasCapability(capability Capability, model string) bool {
+	targetModel := p.model
+	if model != "" {
+		targetModel = model
+	}
+	return GetRegistry().HasCapability(ProviderGroq, targetModel, capability)
 }
 
 // Endpoint returns the Groq API endpoint URL.
@@ -111,7 +198,15 @@ func (p *GroqProvider) SetOption(key string, value any) {
 // PrepareRequest creates the request body for a Groq API call using the new Request structure.
 // It formats the messages and options according to Groq's API requirements.
 func (p *GroqProvider) PrepareRequest(req *Request, options map[string]any) ([]byte, error) {
-	requestBody := p.initializeRequestBody()
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
+	}
+
+	requestBody := p.initializeRequestBodyWithModel(model)
 
 	p.addMessagesToRequestBody(requestBody, req.Messages, options)
 
@@ -135,7 +230,15 @@ func (p *GroqProvider) PrepareRequest(req *Request, options map[string]any) ([]b
 // PrepareStreamRequest creates the request body for a streaming Groq API call.
 // It uses the same structure as PrepareRequest but adds the stream parameter.
 func (p *GroqProvider) PrepareStreamRequest(req *Request, options map[string]any) ([]byte, error) {
-	if !p.SupportsStreaming() {
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
+	}
+
+	if !p.HasCapability(CapStreaming, model) {
 		return nil, errors.New("streaming is not supported by this provider")
 	}
 
@@ -197,36 +300,14 @@ func (p *GroqProvider) ParseStreamResponse(chunk []byte) (*Response, error) {
 	return &Response{Content: Text{Value: response.Choices[0].Delta.Content}}, nil
 }
 
-// SupportsStreaming indicates that Groq supports streaming responses
-func (p *GroqProvider) SupportsStreaming() bool {
-	supportedModels := []string{
-		"openai/gpt-oss-20b",
-		"openai/gpt-oss-120b",
-		"moonshotai/kimi-k2-instruct",
-		"meta-llama/llama-4-maverick-17b-128e-instruct",
-		"meta-llama/llama-4-scout-17b-16e-instruct",
-	}
-
-	return slices.Contains(supportedModels, p.model)
-}
-
-// SupportsStructuredResponse indicates that Groq supports structured output
-// through JSON schema validation
-func (p *GroqProvider) SupportsStructuredResponse() bool {
-	return true
-}
-
-// SupportsFunctionCalling indicates that Groq supports function calling
-func (p *GroqProvider) SupportsFunctionCalling() bool {
-	return true
-}
-
 // Private helper methods
 
 // initializeRequestBody creates the base request body with model information
-func (p *GroqProvider) initializeRequestBody() map[string]any {
+
+// initializeRequestBodyWithModel creates the base request body with specified model
+func (p *GroqProvider) initializeRequestBodyWithModel(model string) map[string]any {
 	return map[string]any{
-		groqKeyModel: p.model,
+		groqKeyModel: model,
 	}
 }
 

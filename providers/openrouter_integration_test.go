@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonschema"
 	"github.com/stretchr/testify/require"
 
 	"github.com/weave-labs/gollm/internal/logging"
@@ -116,7 +117,7 @@ func TestOpenRouterIntegration(t *testing.T) {
 		provider.SetLogger(logger)
 
 		// Define the schema
-		schema := map[string]any{
+		schemaMap := map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"name": map[string]any{
@@ -129,6 +130,11 @@ func TestOpenRouterIntegration(t *testing.T) {
 			"required": []string{"name", "age"},
 		}
 
+		// Convert map to jsonschema.Schema
+		schemaBytes, _ := json.Marshal(schemaMap)
+		var schema jsonschema.Schema
+		_ = json.Unmarshal(schemaBytes, &schema)
+
 		// Create a request with structured response schema
 		req := &Request{
 			Messages: []Message{
@@ -137,7 +143,7 @@ func TestOpenRouterIntegration(t *testing.T) {
 					Content: "Create a JSON object for a person named Alex who is 25 years old.",
 				},
 			},
-			ResponseSchema: schema,
+			ResponseSchema: &schema,
 		}
 
 		// Prepare the request with schema

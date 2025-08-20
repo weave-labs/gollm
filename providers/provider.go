@@ -10,8 +10,6 @@ import (
 )
 
 // Provider defines the complete interface that all LLM providers must implement.
-//
-//nolint:interfacebloat // This will be refactored in the future to a capabilities model.
 type Provider interface {
 	// Core identification and configuration
 	Name() string
@@ -30,10 +28,8 @@ type Provider interface {
 	ParseResponse(body []byte) (*Response, error)
 	ParseStreamResponse(chunk []byte) (*Response, error)
 
-	// Capability checks
-	SupportsStreaming() bool
-	SupportsStructuredResponse() bool
-	SupportsFunctionCalling() bool
+	// Capability checking - accepts optional model parameter to check a specific model's capabilities
+	HasCapability(capability Capability, model string) bool
 }
 
 // ProviderConfig holds the configuration for a provider
@@ -59,15 +55,6 @@ type ProviderConfig struct {
 	// ResponseFormat defines how to parse the response
 	// If empty, uses the default parser for the provider type
 	ResponseFormat string
-
-	// SupportsStructuredResponse indicates if JSON schema validation is supported
-	SupportsStructuredResponse bool
-
-	// SupportsStreaming indicates if streaming is supported
-	SupportsStreaming bool
-
-	// SupportsFunctionCalling indicates if function calling is supported
-	SupportsFunctionCalling bool
 }
 
 // ProviderConstructor defines a function type for creating new provider instances.
