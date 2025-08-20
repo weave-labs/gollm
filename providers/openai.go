@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/invopop/jsonschema"
 	"io"
 	"strings"
 
@@ -89,20 +90,12 @@ func (p *OpenAIProvider) SetOption(key string, value any) {
 // SetDefaultOptions configures standard options from the global configuration.
 // This includes temperature, max tokens, and sampling parameters.
 func (p *OpenAIProvider) SetDefaultOptions(cfg *config.Config) {
-	p.SetOption("temperature", cfg.Temperature)
-	p.SetOption(openAIKeyMaxTokens, cfg.MaxTokens)
+	p.SetOption("max_completion_tokens", cfg.MaxCompletionTokens)
+
 	if cfg.Seed != nil {
 		p.SetOption("seed", *cfg.Seed)
 	}
-	p.logger.Debug(
-		"Default options set",
-		"temperature",
-		cfg.Temperature,
-		openAIKeyMaxTokens,
-		cfg.MaxTokens,
-		"seed",
-		cfg.Seed,
-	)
+
 }
 
 // Name returns "openai" as the provider identifier.
@@ -158,8 +151,11 @@ func (p *OpenAIProvider) PrepareRequest(req *Request, options map[string]any) ([
 	p.handleToolsForRequest(requestBody, options)
 
 	// Handle structured response schema
-	if req.ResponseSchema != nil && p.SupportsStructuredResponse() {
-		p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
+	if req.ResponseJSONSchema != nil && p.SupportsStructuredResponse() {
+		err := p.addStructuredResponseToRequest(requestBody, req.ResponseJSONSchema)
+		if err != nil {
+			return nil, fmt.Errorf("failed to add structured response schema: %w", err)
+		}
 	}
 
 	// Add remaining options
@@ -270,8 +266,11 @@ func (p *OpenAIProvider) PrepareStreamRequest(req *Request, options map[string]a
 	p.handleToolsForRequest(requestBody, options)
 
 	// Handle structured response schema
-	if req.ResponseSchema != nil && p.SupportsStructuredResponse() {
-		p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
+	if req.ResponseJSONSchema != nil && p.SupportsStructuredResponse() {
+		err := p.addStructuredResponseToRequest(requestBody, req.ResponseJSONSchema)
+		if err != nil {
+			return nil, fmt.Errorf("failed to add structured response schema: %w", err)
+		}
 	}
 
 	// Add remaining options
@@ -288,12 +287,12 @@ func (p *OpenAIProvider) PrepareStreamRequest(req *Request, options map[string]a
 func (p *OpenAIProvider) ParseStreamResponse(chunk []byte) (*Response, error) {
 	// Skip empty lines
 	if len(bytes.TrimSpace(chunk)) == 0 {
-		return nil, errors.New("empty chunk")
+		return nil, errors.New("skip chunk")
 	}
 
 	// Check for [DONE] marker
 	if bytes.Equal(bytes.TrimSpace(chunk), []byte("[DONE]")) {
-		return nil, io.EOF
+		return nil, errors.New("skip chunk")
 	}
 
 	// Parse the chunk
@@ -304,7 +303,7 @@ func (p *OpenAIProvider) ParseStreamResponse(chunk []byte) (*Response, error) {
 	}
 
 	if len(response.Choices) == 0 {
-		return nil, errors.New("no choices in response")
+		return nil, errors.New("skip chunk")
 	}
 
 	// Handle finish reason
@@ -314,7 +313,7 @@ func (p *OpenAIProvider) ParseStreamResponse(chunk []byte) (*Response, error) {
 
 	// Skip role-only messages
 	if response.Choices[0].Delta.Role != "" && response.Choices[0].Delta.Content == "" {
-		return nil, errors.New("skip token")
+		return nil, errors.New("skip chunk")
 	}
 
 	usage := &Usage{}
@@ -339,6 +338,10 @@ func (p *OpenAIProvider) ParseStreamResponse(chunk []byte) (*Response, error) {
 
 // needsMaxCompletionTokens checks if the model requires max_completion_tokens instead of max_tokens
 func (p *OpenAIProvider) needsMaxCompletionTokens() bool {
+	if strings.HasPrefix(p.model, "gpt-5") {
+		return true
+	}
+
 	if strings.HasPrefix(p.model, "o") {
 		return true
 	}
@@ -474,16 +477,23 @@ func (p *OpenAIProvider) handleToolsForRequest(requestBody map[string]any, optio
 }
 
 // addStructuredResponseToRequest adds structured response schema to the request
-func (p *OpenAIProvider) addStructuredResponseToRequest(requestBody map[string]any, schema any) {
-	// For OpenAI, we use response_format with JSON schema
+func (p *OpenAIProvider) addStructuredResponseToRequest(requestBody map[string]any, responseJSONSchema *jsonschema.Schema) error {
+
+	//var schemaMap map[string]any
+	//if err := json.Unmarshal(responseSchema, &schemaMap); err != nil {
+	//	return fmt.Errorf("failed to unmarshal response schema: %w", err)
+	//}
+
 	requestBody["response_format"] = map[string]any{
 		"type": "json_schema",
 		"json_schema": map[string]any{
 			"name":   "response",
-			"schema": schema,
-			"strict": true,
+			"schema": responseJSONSchema,
+			"strict": false,
 		},
 	}
+
+	return nil
 }
 
 // addRemainingOptions adds any remaining options to the request body

@@ -80,12 +80,13 @@ var (
 	SetAPIKey         = config.SetAPIKey         // Sets the API key for the current provider
 
 	// Generation parameters
-	SetTemperature      = config.SetTemperature      // Controls randomness in generation (0.0-1.0)
-	SetMaxTokens        = config.SetMaxTokens        // Sets maximum tokens to generate
-	SetTopP             = config.SetTopP             // Controls nucleus sampling
-	SetFrequencyPenalty = config.SetFrequencyPenalty // Penalizes frequent token usage
-	SetPresencePenalty  = config.SetPresencePenalty  // Penalizes repeated tokens
-	SetSeed             = config.SetSeed             // Sets random seed for reproducible generation
+	SetTemperature         = config.SetTemperature         // Controls randomness in generation (0.0-1.0)
+	SetMaxTokens           = config.SetMaxTokens           // Sets maximum tokens to generate
+	SetMaxCompletionTokens = config.SetMaxCompletionTokens // Sets maximum output tokens for generation
+	SetTopP                = config.SetTopP                // Controls nucleus sampling
+	SetFrequencyPenalty    = config.SetFrequencyPenalty    // Penalizes frequent token usage
+	SetPresencePenalty     = config.SetPresencePenalty     // Penalizes repeated tokens
+	SetSeed                = config.SetSeed                // Sets random seed for reproducible generation
 
 	// Advanced generation parameters
 	SetMinP          = config.SetMinP          // Sets minimum probability threshold

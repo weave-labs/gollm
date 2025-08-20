@@ -87,7 +87,8 @@ type Config struct {
 	Timeout               time.Duration    `env:"LLM_TIMEOUT" envDefault:"30s"`
 	PresencePenalty       float64          `env:"LLM_PRESENCE_PENALTY" envDefault:"0.0"`
 	TopP                  float64          `env:"LLM_TOP_P" envDefault:"0.9" validate:"gte=0,lte=1"`
-	MaxTokens             int              `env:"LLM_MAX_TOKENS" envDefault:"100"`
+	MaxTokens             int              `env:"LLM_MAX_TOKENS" envDefault:"16000"`
+	MaxCompletionTokens   int              `env:"LLM_MAX_COMPLETION_TOKENS" envDefault:"128000"`
 	Temperature           float64          `env:"LLM_TEMPERATURE" envDefault:"0.7" validate:"gte=0,lte=1"`
 	EnableCaching         bool             `env:"LLM_ENABLE_CACHING" envDefault:"false"`
 }
@@ -213,6 +214,16 @@ func SetMaxTokens(maxTokens int) ConfigOption {
 			maxTokens = 1
 		}
 		c.MaxTokens = maxTokens
+	}
+}
+
+// SetMaxCompletionTokens sets the maximum number of tokens for completion.
+func SetMaxCompletionTokens(maxCompletionTokens int) ConfigOption {
+	return func(c *Config) {
+		if maxCompletionTokens < 1 {
+			maxCompletionTokens = 1
+		}
+		c.MaxCompletionTokens = maxCompletionTokens
 	}
 }
 

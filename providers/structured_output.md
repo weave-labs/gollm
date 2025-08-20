@@ -1,4 +1,234 @@
 ```go
+
+func GenerateContent() {
+    parameterMap := make(map[string]any)
+    kwargs := map[string]any{"model": model, "contents": contents, "config": config}
+    deepMarshal(kwargs, &parameterMap)
+    ...
+    schemaToVertex(parameterMap, ...)
+}
+
+func deepMarshal(input any, output *map[string]any) error {
+    if inputBytes, err := json.Marshal(input); err != nil {
+        return fmt.Errorf("deepMarshal: unable to marshal input: %w", err)
+    } else if err := json.Unmarshal(inputBytes, output); err != nil {
+        return fmt.Errorf("deepMarshal: unable to unmarshal input: %w", err)
+    }
+    return nil
+}
+
+func generateContentConfigToVertex(ac *apiClient, fromObject map[string]any, parentObject map[string]any) (toObject map[string]any, err error) {
+toObject = make(map[string]any)
+
+fromSystemInstruction := getValueByPath(fromObject, []string{"systemInstruction"})
+if fromSystemInstruction != nil {
+fromSystemInstruction, err = tContent(fromSystemInstruction)
+if err != nil {
+return nil, err
+}
+
+fromSystemInstruction, err = contentToVertex(fromSystemInstruction.(map[string]any), toObject)
+if err != nil {
+return nil, err
+}
+
+setValueByPath(parentObject, []string{"systemInstruction"}, fromSystemInstruction)
+}
+
+fromTemperature := getValueByPath(fromObject, []string{"temperature"})
+if fromTemperature != nil {
+setValueByPath(toObject, []string{"temperature"}, fromTemperature)
+}
+
+fromTopP := getValueByPath(fromObject, []string{"topP"})
+if fromTopP != nil {
+setValueByPath(toObject, []string{"topP"}, fromTopP)
+}
+
+fromTopK := getValueByPath(fromObject, []string{"topK"})
+if fromTopK != nil {
+setValueByPath(toObject, []string{"topK"}, fromTopK)
+}
+
+fromCandidateCount := getValueByPath(fromObject, []string{"candidateCount"})
+if fromCandidateCount != nil {
+setValueByPath(toObject, []string{"candidateCount"}, fromCandidateCount)
+}
+
+fromMaxOutputTokens := getValueByPath(fromObject, []string{"maxOutputTokens"})
+if fromMaxOutputTokens != nil {
+setValueByPath(toObject, []string{"maxOutputTokens"}, fromMaxOutputTokens)
+}
+
+fromStopSequences := getValueByPath(fromObject, []string{"stopSequences"})
+if fromStopSequences != nil {
+setValueByPath(toObject, []string{"stopSequences"}, fromStopSequences)
+}
+
+fromResponseLogprobs := getValueByPath(fromObject, []string{"responseLogprobs"})
+if fromResponseLogprobs != nil {
+setValueByPath(toObject, []string{"responseLogprobs"}, fromResponseLogprobs)
+}
+
+fromLogprobs := getValueByPath(fromObject, []string{"logprobs"})
+if fromLogprobs != nil {
+setValueByPath(toObject, []string{"logprobs"}, fromLogprobs)
+}
+
+fromPresencePenalty := getValueByPath(fromObject, []string{"presencePenalty"})
+if fromPresencePenalty != nil {
+setValueByPath(toObject, []string{"presencePenalty"}, fromPresencePenalty)
+}
+
+fromFrequencyPenalty := getValueByPath(fromObject, []string{"frequencyPenalty"})
+if fromFrequencyPenalty != nil {
+setValueByPath(toObject, []string{"frequencyPenalty"}, fromFrequencyPenalty)
+}
+
+fromSeed := getValueByPath(fromObject, []string{"seed"})
+if fromSeed != nil {
+setValueByPath(toObject, []string{"seed"}, fromSeed)
+}
+
+fromResponseMimeType := getValueByPath(fromObject, []string{"responseMimeType"})
+if fromResponseMimeType != nil {
+setValueByPath(toObject, []string{"responseMimeType"}, fromResponseMimeType)
+}
+
+fromResponseSchema := getValueByPath(fromObject, []string{"responseSchema"})
+if fromResponseSchema != nil {
+fromResponseSchema, err = tSchema(fromResponseSchema)
+if err != nil {
+return nil, err
+}
+
+fromResponseSchema, err = schemaToVertex(fromResponseSchema.(map[string]any), toObject)
+if err != nil {
+return nil, err
+}
+
+setValueByPath(toObject, []string{"responseSchema"}, fromResponseSchema)
+}
+
+fromResponseJsonSchema := getValueByPath(fromObject, []string{"responseJsonSchema"})
+if fromResponseJsonSchema != nil {
+setValueByPath(toObject, []string{"responseJsonSchema"}, fromResponseJsonSchema)
+}
+
+fromRoutingConfig := getValueByPath(fromObject, []string{"routingConfig"})
+if fromRoutingConfig != nil {
+setValueByPath(toObject, []string{"routingConfig"}, fromRoutingConfig)
+}
+
+fromModelSelectionConfig := getValueByPath(fromObject, []string{"modelSelectionConfig"})
+if fromModelSelectionConfig != nil {
+fromModelSelectionConfig, err = modelSelectionConfigToVertex(fromModelSelectionConfig.(map[string]any), toObject)
+if err != nil {
+return nil, err
+}
+
+setValueByPath(toObject, []string{"modelConfig"}, fromModelSelectionConfig)
+}
+
+fromSafetySettings := getValueByPath(fromObject, []string{"safetySettings"})
+if fromSafetySettings != nil {
+fromSafetySettings, err = applyConverterToSlice(fromSafetySettings.([]any), safetySettingToVertex)
+if err != nil {
+return nil, err
+}
+
+setValueByPath(parentObject, []string{"safetySettings"}, fromSafetySettings)
+}
+
+fromTools := getValueByPath(fromObject, []string{"tools"})
+if fromTools != nil {
+fromTools, err = applyItemTransformerToSlice(fromTools.([]any), tTool)
+if err != nil {
+return nil, err
+}
+
+fromTools, err = tTools(fromTools)
+if err != nil {
+return nil, err
+}
+
+fromTools, err = applyConverterToSlice(fromTools.([]any), toolToVertex)
+if err != nil {
+return nil, err
+}
+
+setValueByPath(parentObject, []string{"tools"}, fromTools)
+}
+
+fromToolConfig := getValueByPath(fromObject, []string{"toolConfig"})
+if fromToolConfig != nil {
+fromToolConfig, err = toolConfigToVertex(fromToolConfig.(map[string]any), toObject)
+if err != nil {
+return nil, err
+}
+
+setValueByPath(parentObject, []string{"toolConfig"}, fromToolConfig)
+}
+
+fromLabels := getValueByPath(fromObject, []string{"labels"})
+if fromLabels != nil {
+setValueByPath(parentObject, []string{"labels"}, fromLabels)
+}
+
+fromCachedContent := getValueByPath(fromObject, []string{"cachedContent"})
+if fromCachedContent != nil {
+fromCachedContent, err = tCachedContentName(ac, fromCachedContent)
+if err != nil {
+return nil, err
+}
+
+setValueByPath(parentObject, []string{"cachedContent"}, fromCachedContent)
+}
+
+fromResponseModalities := getValueByPath(fromObject, []string{"responseModalities"})
+if fromResponseModalities != nil {
+setValueByPath(toObject, []string{"responseModalities"}, fromResponseModalities)
+}
+
+fromMediaResolution := getValueByPath(fromObject, []string{"mediaResolution"})
+if fromMediaResolution != nil {
+setValueByPath(toObject, []string{"mediaResolution"}, fromMediaResolution)
+}
+
+fromSpeechConfig := getValueByPath(fromObject, []string{"speechConfig"})
+if fromSpeechConfig != nil {
+fromSpeechConfig, err = tSpeechConfig(fromSpeechConfig)
+if err != nil {
+return nil, err
+}
+
+fromSpeechConfig, err = speechConfigToVertex(fromSpeechConfig.(map[string]any), toObject)
+if err != nil {
+return nil, err
+}
+
+setValueByPath(toObject, []string{"speechConfig"}, fromSpeechConfig)
+}
+
+fromAudioTimestamp := getValueByPath(fromObject, []string{"audioTimestamp"})
+if fromAudioTimestamp != nil {
+setValueByPath(toObject, []string{"audioTimestamp"}, fromAudioTimestamp)
+}
+
+fromThinkingConfig := getValueByPath(fromObject, []string{"thinkingConfig"})
+if fromThinkingConfig != nil {
+fromThinkingConfig, err = thinkingConfigToVertex(fromThinkingConfig.(map[string]any), toObject)
+if err != nil {
+return nil, err
+}
+
+setValueByPath(toObject, []string{"thinkingConfig"}, fromThinkingConfig)
+}
+
+return toObject, nil
+}
+
+
 func schemaToVertex(fromObject map[string]any, parentObject map[string]any) (toObject map[string]any, err error) {
     toObject = make(map[string]any)
     
@@ -124,49 +354,52 @@ func schemaToVertex(fromObject map[string]any, parentObject map[string]any) (toO
 //	getValueByPath(map[string]any{"a": {"b": [{"c": "v1"}, {"c": "v2"}]}}, []string{"a", "b[]", "c"})
 //	  -> []any{"v1", "v2"}
 func getValueByPath(data any, keys []string) any {
-if len(keys) == 1 && keys[0] == "_self" {
-return data
-}
-if len(keys) == 0 {
-return nil
-}
-var current any = data
-for i, key := range keys {
-if strings.HasSuffix(key, "[]") {
-keyName := key[:len(key)-2]
-switch v := current.(type) {
-case map[string]any:
-if sliceData, ok := v[keyName]; ok {
-var result []any
-switch concreteSliceData := sliceData.(type) {
-case []map[string]any:
-for _, d := range concreteSliceData {
-result = append(result, getValueByPath(d, keys[i+1:]))
-}
-case []any:
-for _, d := range concreteSliceData {
-result = append(result, getValueByPath(d, keys[i+1:]))
-}
-default:
-return nil
-}
-return result
-} else {
-return nil
-}
-default:
-return nil
-}
-} else {
-switch v := current.(type) {
-case map[string]any:
-current = v[key]
-default:
-return nil
-}
-}
-}
-return current
+    if len(keys) == 1 && keys[0] == "_self" {
+        return data
+    }
+	
+    if len(keys) == 0 {
+        return nil
+    }
+	
+    var current any = data
+    for i, key := range keys {
+        if strings.HasSuffix(key, "[]") {
+            keyName := key[:len(key)-2]
+            switch v := current.(type) {
+            case map[string]any:
+                if sliceData, ok := v[keyName]; ok {
+                    var result []any
+					
+                    switch concreteSliceData := sliceData.(type) {
+                    case []map[string]any:
+                        for _, d := range concreteSliceData {
+                            result = append(result, getValueByPath(d, keys[i+1:]))
+                        }
+                    case []any:
+                        for _, d := range concreteSliceData {
+                            result = append(result, getValueByPath(d, keys[i+1:]))
+                        }
+                    default:
+                        return nil
+                }
+                    return result
+                } else {
+                    return nil
+                }
+            default:
+                return nil
+            }
+        } else {
+            switch v := current.(type) {
+            case map[string]any:
+                current = v[key]
+            default:
+                return nil
+            }
+        }
+    }
+    return current
 }
 
 ```

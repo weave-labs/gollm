@@ -6,9 +6,8 @@ package llm
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"github.com/modelcontextprotocol/go-sdk/jsonschema"
+	"github.com/invopop/jsonschema"
 	"io"
 	"net/http"
 	"sync"
@@ -205,9 +204,9 @@ func (l *LLMImpl) GenerateStream(ctx context.Context, prompt *Prompt, opts ...Ge
 }
 
 // generateWithRetries handles standard generation with retry logic
-func (l *LLMImpl) generateWithRetries(ctx context.Context, prompt *Prompt, schema *jsonschema.Schema) (*providers.Response, error) {
+func (l *LLMImpl) generateWithRetries(ctx context.Context, prompt *Prompt, responseSchema *jsonschema.Schema) (*providers.Response, error) {
 	for attempt := 0; attempt <= l.MaxRetries; attempt++ {
-		result, err := l.attemptGenerate(ctx, prompt, schema)
+		result, err := l.attemptGenerate(ctx, prompt, responseSchema)
 		if err == nil {
 			return result, nil
 		}
@@ -237,10 +236,10 @@ func (l *LLMImpl) wait(ctx context.Context) error {
 
 // attemptGenerate makes a single attempt to generate text using the provider.
 // It handles request preparation, API communication, and response processing.
-func (l *LLMImpl) attemptGenerate(ctx context.Context, prompt *Prompt, schema *jsonschema.Schema) (*providers.Response, error) {
+func (l *LLMImpl) attemptGenerate(ctx context.Context, prompt *Prompt, responseSchema *jsonschema.Schema) (*providers.Response, error) {
 	response := &providers.Response{}
 
-	reqBody, err := l.prepareRequestBody(prompt, schema)
+	reqBody, err := l.prepareRequestBody(prompt, responseSchema)
 	if err != nil {
 		return response, NewLLMError(ErrorTypeRequest, "failed to prepare request", err)
 	}
@@ -250,14 +249,14 @@ func (l *LLMImpl) attemptGenerate(ctx context.Context, prompt *Prompt, schema *j
 		return response, err
 	}
 
-	if schema != nil {
+	if responseSchema != nil {
 		textContent, ok := response.Content.(providers.Text)
 		if !ok {
 			return nil, NewLLMError(ErrorTypeResponse, "response content is not text", nil)
 		}
 
-		if err := ValidateAgainstSchema(textContent.Value, schema); err != nil {
-			return nil, NewLLMError(ErrorTypeResponse, "response does not match schema", err)
+		if err := ValidateAgainstSchema(textContent.Value, responseSchema); err != nil {
+			return nil, NewLLMError(ErrorTypeResponse, "response does not match responseSchema", err)
 		}
 	}
 
@@ -286,7 +285,7 @@ func (l *LLMImpl) prepareOptions(prompt *Prompt) map[string]any {
 }
 
 // prepareRequestBody prepares the request body using the new provider architecture
-func (l *LLMImpl) prepareRequestBody(prompt *Prompt, schema *jsonschema.Schema) ([]byte, error) {
+func (l *LLMImpl) prepareRequestBody(prompt *Prompt, responseSchema *jsonschema.Schema) ([]byte, error) {
 	options := l.prepareOptions(prompt)
 
 	builder := providers.NewRequestBuilder()
@@ -294,8 +293,8 @@ func (l *LLMImpl) prepareRequestBody(prompt *Prompt, schema *jsonschema.Schema) 
 		WithMessages(ToMessages(prompt.Messages)).
 		WithPrompt(prompt.Input)
 
-	if schema != nil {
-		builder.WithResponseSchema(schema)
+	if responseSchema != nil {
+		builder.WithResponseSchema(responseSchema)
 	}
 
 	if prompt.SystemPrompt != "" {
@@ -350,113 +349,4 @@ func (l *LLMImpl) executeRequest(ctx context.Context, reqBody []byte) (*provider
 	}
 
 	return response, nil
-}
-
-// providerStream implements TokenStream for a specific provider
-type providerStream struct {
-	provider      providers.Provider
-	retryStrategy RetryStrategy
-	decoder       *SSEDecoder
-	config        *GenerateConfig
-	buffer        []byte
-	currentIndex  int
-}
-
-func newProviderStream(reader io.ReadCloser, provider providers.Provider, cfg *GenerateConfig) *providerStream {
-	return &providerStream{
-		decoder:       NewSSEDecoder(reader),
-		provider:      provider,
-		config:        cfg,
-		buffer:        make([]byte, 0, DefaultStreamBufferSize),
-		currentIndex:  0,
-		retryStrategy: cfg.RetryStrategy,
-	}
-}
-
-func (s *providerStream) Next(ctx context.Context) (*StreamToken, error) {
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
-		default:
-			token, shouldContinue, err := s.processNextEvent()
-			if err != nil {
-				return nil, err
-			}
-			if shouldContinue {
-				continue
-			}
-			return token, nil
-		}
-	}
-}
-
-// processNextEvent handles the next event from the decoder
-func (s *providerStream) processNextEvent() (*StreamToken, bool, error) {
-	if !s.decoder.Next() {
-		return s.handleDecoderEnd()
-	}
-
-	event := s.decoder.Event()
-	if len(event.Data) == 0 {
-		return nil, true, nil // continue
-	}
-
-	return s.processEventData(event)
-}
-
-// handleDecoderEnd handles the case when decoder has no more events
-func (s *providerStream) handleDecoderEnd() (*StreamToken, bool, error) {
-	if err := s.decoder.Err(); err != nil {
-		if s.retryStrategy.ShouldRetry(err) {
-			time.Sleep(s.retryStrategy.NextDelay())
-			return nil, true, nil // continue
-		}
-		return nil, false, err
-	}
-	return nil, false, io.EOF
-}
-
-// processEventData processes the event data and creates a stream token
-func (s *providerStream) processEventData(event Event) (*StreamToken, bool, error) {
-	resp, err := s.provider.ParseStreamResponse(event.Data)
-	if err != nil {
-		if err.Error() == "skip resp" {
-			return nil, true, nil // continue
-		}
-		if errors.Is(err, io.EOF) {
-			return nil, false, io.EOF
-		}
-		return nil, true, nil // continue - Not enough data or malformed
-	}
-
-	return s.createStreamToken(event, resp), false, nil
-}
-
-// createStreamToken creates a stream token from the response
-func (s *providerStream) createStreamToken(event Event, resp *providers.Response) *StreamToken {
-	streamToken := &StreamToken{
-		Text:  "",
-		Type:  event.Type,
-		Index: s.currentIndex,
-	}
-
-	if resp == nil {
-		return streamToken
-	}
-
-	if resp.Content != nil {
-		streamToken.Text = resp.AsText()
-	}
-
-	if resp.Usage != nil {
-		streamToken.InputTokens = resp.Usage.InputTokens
-		streamToken.OutputTokens = resp.Usage.OutputTokens
-	}
-
-	return streamToken
-}
-
-func (s *providerStream) Close() error {
-	return nil
 }

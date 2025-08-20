@@ -5,13 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/modelcontextprotocol/go-sdk/jsonschema"
 	"strings"
-
-	"github.com/weave-labs/gollm/internal/models"
 
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
+	"github.com/weave-labs/gollm/internal/models"
 )
 
 // Gemini-specific parameter keys
@@ -212,30 +210,17 @@ func (p *GeminiProvider) ParseResponse(body []byte) (*Response, error) {
 
 // ParseStreamResponse parses streaming response chunks from the Gemini API.
 func (p *GeminiProvider) ParseStreamResponse(chunk []byte) (*Response, error) {
-	// Handle SSE format - remove "data: " prefix if present
 	dataStr := strings.TrimPrefix(string(chunk), "data: ")
 
-	// Skip empty chunks or [DONE] markers
 	if strings.TrimSpace(dataStr) == "" || strings.TrimSpace(dataStr) == "[DONE]" {
 		return nil, errors.New("skip chunk")
 	}
 
 	var resp geminiResponse
 	if err := json.Unmarshal([]byte(dataStr), &resp); err != nil {
-		// Skip malformed chunks
-		return nil, errors.New("skip chunk")
+		return nil, fmt.Errorf("malformed response: %w", err)
 	}
 
-	// If usage metadata is present (possibly in the final chunk), return a Response with usage info
-	if resp.UsageMetadata != nil {
-		um := resp.UsageMetadata
-		usageResp := &Response{
-			Usage: NewUsage(um.PromptTokenCount, um.CachedContentTokenCount, um.CandidatesTokenCount, 0, 0),
-		}
-		return usageResp, nil
-	}
-
-	// If no candidates or parts, skip this chunk
 	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
 		return nil, errors.New("skip chunk")
 	}
@@ -256,9 +241,20 @@ func (p *GeminiProvider) ParseStreamResponse(chunk []byte) (*Response, error) {
 		return nil, errors.New("skip chunk")
 	}
 
+	usage := &Usage{}
+	if resp.UsageMetadata != nil {
+		usage = NewUsage(
+			resp.UsageMetadata.PromptTokenCount,
+			resp.UsageMetadata.CachedContentTokenCount,
+			resp.UsageMetadata.CandidatesTokenCount,
+			0,
+			0)
+	}
+
 	return &Response{
 		Role:    "assistant",
 		Content: Text{Value: finalText.String()},
+		Usage:   usage,
 	}, nil
 }
 
@@ -322,23 +318,23 @@ func (p *GeminiProvider) handleToolsForRequest(requestBody map[string]any, optio
 	}
 }
 
-func (p *GeminiProvider) addStructuredResponseToRequest(requestBody map[string]any, schema *jsonschema.Schema) error {
-	if schema == nil {
+func (p *GeminiProvider) addStructuredResponseToRequest(requestBody map[string]any, responseSchema []byte) error {
+	if responseSchema == nil {
 		return nil
 	}
 
-	//schemaJSON, err := schema.MarshalJSON()
-	//if err != nil {
-	//	return fmt.Errorf("failed to marshal response schema: %w", err)
-	//}
+	var schemaMap map[string]any
+	if err := json.Unmarshal(responseSchema, &schemaMap); err != nil {
+		return fmt.Errorf("failed to unmarshal response schema: %w", err)
+	}
 
 	if genConfig, ok := requestBody["generationConfig"].(map[string]any); ok {
 		genConfig["responseMimeType"] = "application/json"
-		genConfig["responseSchema"] = schema
+		genConfig["responseSchema"] = schemaMap
 	} else {
 		requestBody["generationConfig"] = map[string]any{
 			"responseMimeType": "application/json",
-			"responseSchema":   schema,
+			"responseSchema":   schemaMap,
 		}
 	}
 
