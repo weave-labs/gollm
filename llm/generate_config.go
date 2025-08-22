@@ -1,22 +1,17 @@
 package llm
 
+import (
+	"github.com/invopop/jsonschema"
+)
+
 // GenerateOption is a function type for configuring generation behavior.
 type GenerateOption func(*GenerateConfig)
 
-// WithStructuredResponseSchema configures Generate to produce output conforming to the provided schema type.
+// WithStructuredResponse configures Generate to produce output conforming to the provided schema type.
 // The generic type parameter T should be a struct type describing the expected JSON structure.
-func WithStructuredResponseSchema[T any]() GenerateOption {
+func WithStructuredResponse[T any]() GenerateOption {
 	return func(cfg *GenerateConfig) {
-		cfg.StructuredResponseSchema = *new(T)
-	}
-}
-
-// WithStructuredResponse configures Generate to produce output conforming to the provided schema value.
-// Use this when you already have a JSON Schema or example instance at runtime (e.g., map[string]any or a struct
-// instance).
-func WithStructuredResponse(schema any) GenerateOption {
-	return func(cfg *GenerateConfig) {
-		cfg.StructuredResponseSchema = schema
+		cfg.StructuredResponse = StripSchemaIDs(StructuredResponseReflector().Reflect(*new(T)))
 	}
 }
 
@@ -36,7 +31,7 @@ func WithRetryStrategy(strategy RetryStrategy) GenerateOption {
 
 // GenerateConfig holds configuration options for text generation.
 type GenerateConfig struct {
-	RetryStrategy            RetryStrategy
-	StructuredResponseSchema any
-	StreamBufferSize         int
+	RetryStrategy      RetryStrategy
+	StructuredResponse *jsonschema.Schema
+	StreamBufferSize   int
 }

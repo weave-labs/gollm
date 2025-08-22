@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/weave-labs/gollm/internal/models"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/weave-labs/gollm/providers"
 
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
@@ -16,7 +16,7 @@ import (
 
 // MockProvider implements a simple mock provider for testing
 type MockProvider struct {
-	messages   []models.MemoryMessage
+	messages   []MemoryMessage
 	flattened  string
 	structured bool
 	logger     logging.Logger
@@ -41,7 +41,7 @@ func (p *MockProvider) PrepareRequest(prompt string, options map[string]any) ([]
 }
 
 func (p *MockProvider) PrepareRequestWithMessages(
-	messages []models.MemoryMessage,
+	messages []MemoryMessage,
 	options map[string]any,
 ) ([]byte, error) {
 	p.messages = messages
@@ -51,18 +51,16 @@ func (p *MockProvider) PrepareRequestWithMessages(
 func (p *MockProvider) PrepareRequestWithSchema(prompt string, options map[string]any, schema any) ([]byte, error) {
 	return []byte(`{}`), nil
 }
-func (p *MockProvider) SetExtraHeaders(extraHeaders map[string]string)  {}
-func (p *MockProvider) HandleFunctionCalls(body []byte) ([]byte, error) { return nil, nil }
-func (p *MockProvider) SupportsJSONSchema() bool                        { return false }
-func (p *MockProvider) SetDefaultOptions(cfg *config.Config)            {}
-func (p *MockProvider) SetOption(key string, value any)                 {}
-func (p *MockProvider) SetLogger(logger logging.Logger)                 { p.logger = logger }
-func (p *MockProvider) SupportsStreaming() bool                         { return false }
+func (p *MockProvider) SetExtraHeaders(extraHeaders map[string]string)               {}
+func (p *MockProvider) HandleFunctionCalls(body []byte) ([]byte, error)              { return nil, nil }
+func (p *MockProvider) SetDefaultOptions(cfg *config.Config)                         {}
+func (p *MockProvider) SetOption(key string, value any)                              {}
+func (p *MockProvider) SetLogger(logger logging.Logger)                              { p.logger = logger }
+func (p *MockProvider) HasCapability(cap providers.Capability, model ...string) bool { return false }
 func (p *MockProvider) PrepareStreamRequest(prompt string, options map[string]any) ([]byte, error) {
 	return []byte(`{}`), nil
 }
 func (p *MockProvider) ParseStreamResponse(chunk []byte) (string, error) { return "", nil }
-func (p *MockProvider) SupportsStructuredResponse() bool                 { return false }
 func (p *MockProvider) ParseResponse(body []byte) (string, error) {
 	return "mock response", nil
 }
@@ -99,7 +97,7 @@ func (l *MockLLM) Generate(ctx context.Context, prompt *Prompt, opts ...Generate
 	// Get the structured messages that were set with SetOption
 	structuredMsgs, ok := l.provider.options["structured_messages"]
 	if ok {
-		if messages, ok := structuredMsgs.([]models.MemoryMessage); ok {
+		if messages, ok := structuredMsgs.([]MemoryMessage); ok {
 			if _, err := l.provider.PrepareRequestWithMessages(messages, nil); err != nil {
 				return "", err
 			}
@@ -125,10 +123,10 @@ func (l *MockLLM) GenerateWithSchema(
 func (l *MockLLM) GenerateStream(ctx context.Context, prompt *Prompt, opts ...GenerateOption) (TokenStream, error) {
 	return nil, errors.New("streaming not supported")
 }
-func (l *MockLLM) SupportsStreaming() bool { return false }
+func (l *MockLLM) SupportsStreaming() bool { return l.provider.HasCapability(providers.CapStreaming) }
 func (l *MockLLM) SetOption(key string, value any) {
 	if key == "structured_messages" {
-		if messages, ok := value.([]models.MemoryMessage); ok {
+		if messages, ok := value.([]MemoryMessage); ok {
 			l.provider.options = map[string]any{
 				"structured_messages": messages,
 			}
@@ -154,7 +152,7 @@ func TestStructuredMessageStorage(t *testing.T) {
 	memory.Add("user", "Hello, how are you?")
 
 	// Add structured message with cache control
-	structuredMsg := models.MemoryMessage{
+	structuredMsg := MemoryMessage{
 		Role:         "user",
 		Content:      "This has cache control",
 		CacheControl: "ephemeral",

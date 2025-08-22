@@ -61,6 +61,8 @@ type MemoryOption struct {
 //   - LLM_MIROSTAT_ETA: Mirostat learning rate
 //   - LLM_MIROSTAT_TAU: Mirostat target entropy
 //   - LLM_TFS_Z: Tail-free sampling parameter
+//
+//nolint:tagliatelle // Config struct is used for environment variable parsing and should not be tagged
 type Config struct {
 	TfsZ                  *float64 `env:"LLM_TFS_Z" envDefault:"1"`
 	MirostatTau           *float64 `env:"LLM_MIROSTAT_TAU" envDefault:"5.0"`
@@ -79,13 +81,14 @@ type Config struct {
 	SystemPromptCacheType string
 	OllamaEndpoint        string           `env:"OLLAMA_ENDPOINT" envDefault:"http://localhost:11434"`
 	FrequencyPenalty      float64          `env:"LLM_FREQUENCY_PENALTY" envDefault:"0.0"`
-	LogLevel              logging.LogLevel `env:"LLM_LOG_LEVEL" envDefault:"WARN"`
+	LogLevel              logging.LogLevel `env:"LLM_LOG_LEVEL" envDefault:"2"`
 	RetryDelay            time.Duration    `env:"LLM_RETRY_DELAY" envDefault:"2s"`
 	MaxRetries            int              `env:"LLM_MAX_RETRIES" envDefault:"3"`
 	Timeout               time.Duration    `env:"LLM_TIMEOUT" envDefault:"30s"`
 	PresencePenalty       float64          `env:"LLM_PRESENCE_PENALTY" envDefault:"0.0"`
 	TopP                  float64          `env:"LLM_TOP_P" envDefault:"0.9" validate:"gte=0,lte=1"`
-	MaxTokens             int              `env:"LLM_MAX_TOKENS" envDefault:"100"`
+	MaxTokens             int              `env:"LLM_MAX_TOKENS" envDefault:"16000"`
+	MaxCompletionTokens   int              `env:"LLM_MAX_COMPLETION_TOKENS" envDefault:"128000"`
 	Temperature           float64          `env:"LLM_TEMPERATURE" envDefault:"0.7" validate:"gte=0,lte=1"`
 	EnableCaching         bool             `env:"LLM_ENABLE_CACHING" envDefault:"false"`
 }
@@ -211,6 +214,16 @@ func SetMaxTokens(maxTokens int) ConfigOption {
 			maxTokens = 1
 		}
 		c.MaxTokens = maxTokens
+	}
+}
+
+// SetMaxCompletionTokens sets the maximum number of tokens for completion.
+func SetMaxCompletionTokens(maxCompletionTokens int) ConfigOption {
+	return func(c *Config) {
+		if maxCompletionTokens < 1 {
+			maxCompletionTokens = 1
+		}
+		c.MaxCompletionTokens = maxCompletionTokens
 	}
 }
 
