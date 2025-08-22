@@ -11,7 +11,7 @@ import (
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
 	"github.com/weave-labs/gollm/internal/models"
-	modexv1 "github.com/weave-labs/weave-go/weaveapi/modex/v1"
+	"github.com/weave-labs/weave-go/weaveapi/modex/v1"
 )
 
 // Common parameter keys
@@ -124,42 +124,42 @@ func (p *AnthropicProvider) registerCapabilities() {
 	for _, model := range allModels {
 		// All Claude models support structured responses
 		registry.RegisterCapability(ProviderAnthropic, model,
-			modexv1.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &modexv1.StructuredResponse{
+			modex.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &modex.StructuredResponse{
 				RequiresToolUse:  true,
-				SupportedFormats: []modexv1.DataFormat{modexv1.DataFormat_DATA_FORMAT_JSON},
+				SupportedFormats: []modex.DataFormat{modex.DataFormat_DATA_FORMAT_JSON},
 				MaxSchemaDepth:   10,
 				MaxProperties:    100,
-				SupportedTypes: []modexv1.JsonSchemaType{
-					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
-					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
-					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
-					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
-					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+				SupportedTypes: []modex.JsonSchemaType{
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
 				},
 			})
 
 		// All Claude models support function calling
-		registry.RegisterCapability(ProviderAnthropic, model, modexv1.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
-			&modexv1.FunctionCalling{
+		registry.RegisterCapability(ProviderAnthropic, model, modex.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
+			&modex.FunctionCalling{
 				MaxFunctions:      64,
 				MaxParallelCalls:  10,
 				SupportsParallel:  true,
 				RequiresToolRole:  false,
 				SupportsStreaming: false,
-				SupportedParameterTypes: []modexv1.JsonSchemaType{
-					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
-					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
-					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
-					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
-					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
-					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_NULL,
+				SupportedParameterTypes: []modex.JsonSchemaType{
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_NULL,
 				},
 				MaxNestingDepth: 10,
 			})
 
 		// All Claude models support streaming
-		registry.RegisterCapability(ProviderAnthropic, model, modexv1.CapabilityType_CAPABILITY_TYPE_STREAMING,
-			&modexv1.Streaming{
+		registry.RegisterCapability(ProviderAnthropic, model, modex.CapabilityType_CAPABILITY_TYPE_STREAMING,
+			&modex.Streaming{
 				ChunkDelimiter: "\n",
 				SupportsSse:    true,
 				SupportsUsage:  true,
@@ -167,9 +167,9 @@ func (p *AnthropicProvider) registerCapabilities() {
 
 		// Claude 3+ models support caching
 		if strings.Contains(model, "claude-3") {
-			registry.RegisterCapability(ProviderAnthropic, model, modexv1.CapabilityType_CAPABILITY_TYPE_CACHING,
-				&modexv1.Caching{
-					CacheKeyStrategy:       modexv1.CacheStrategy_CACHE_STRATEGY_SEMANTIC,
+			registry.RegisterCapability(ProviderAnthropic, model, modex.CapabilityType_CAPABILITY_TYPE_CACHING,
+				&modex.Caching{
+					CacheKeyStrategy:       modex.CacheStrategy_CACHE_STRATEGY_SEMANTIC,
 					SupportsContextCaching: true,
 					SupportsPromptCaching:  true,
 					MinCacheableTokens:     1024,
@@ -179,13 +179,13 @@ func (p *AnthropicProvider) registerCapabilities() {
 
 		// Vision capability for Claude 3 models only
 		if strings.Contains(model, "claude-3") {
-			registry.RegisterCapability(ProviderAnthropic, model, modexv1.CapabilityType_CAPABILITY_TYPE_VISION,
-				&modexv1.Vision{
-					SupportedFormats: []modexv1.ImageFormat{
-						modexv1.ImageFormat_IMAGE_FORMAT_JPEG,
-						modexv1.ImageFormat_IMAGE_FORMAT_PNG,
-						modexv1.ImageFormat_IMAGE_FORMAT_GIF,
-						modexv1.ImageFormat_IMAGE_FORMAT_WEBP,
+			registry.RegisterCapability(ProviderAnthropic, model, modex.CapabilityType_CAPABILITY_TYPE_VISION,
+				&modex.Vision{
+					SupportedFormats: []modex.ImageFormat{
+						modex.ImageFormat_IMAGE_FORMAT_JPEG,
+						modex.ImageFormat_IMAGE_FORMAT_PNG,
+						modex.ImageFormat_IMAGE_FORMAT_GIF,
+						modex.ImageFormat_IMAGE_FORMAT_WEBP,
 					},
 					MaxImageSizeBytes:       5 * 1024 * 1024, // 5MB
 					MaxImagesPerRequest:     20,
@@ -199,23 +199,23 @@ func (p *AnthropicProvider) registerCapabilities() {
 		}
 
 		// System prompt support for all models
-		registry.RegisterCapability(ProviderAnthropic, model, modexv1.CapabilityType_CAPABILITY_TYPE_SYSTEM_PROMPT,
-			&modexv1.SystemPrompt{
+		registry.RegisterCapability(ProviderAnthropic, model, modex.CapabilityType_CAPABILITY_TYPE_SYSTEM_PROMPT,
+			&modex.SystemPrompt{
 				MaxLength:        100000,
 				SupportsMultiple: true,
 				SupportsCaching:  true,
-				Format:           modexv1.DataFormat_DATA_FORMAT_PLAIN,
+				Format:           modex.DataFormat_DATA_FORMAT_PLAIN,
 			})
 
 		// Vision capability for Claude 3 models only
 		if strings.Contains(model, "claude-3") {
-			registry.RegisterCapability(ProviderAnthropic, model, modexv1.CapabilityType_CAPABILITY_TYPE_VISION,
-				&modexv1.Vision{
-					SupportedFormats: []modexv1.ImageFormat{
-						modexv1.ImageFormat_IMAGE_FORMAT_JPEG,
-						modexv1.ImageFormat_IMAGE_FORMAT_PNG,
-						modexv1.ImageFormat_IMAGE_FORMAT_GIF,
-						modexv1.ImageFormat_IMAGE_FORMAT_WEBP,
+			registry.RegisterCapability(ProviderAnthropic, model, modex.CapabilityType_CAPABILITY_TYPE_VISION,
+				&modex.Vision{
+					SupportedFormats: []modex.ImageFormat{
+						modex.ImageFormat_IMAGE_FORMAT_JPEG,
+						modex.ImageFormat_IMAGE_FORMAT_PNG,
+						modex.ImageFormat_IMAGE_FORMAT_GIF,
+						modex.ImageFormat_IMAGE_FORMAT_WEBP,
 					},
 					MaxImageSizeBytes:       5 * 1024 * 1024, // 5MB
 					MaxImagesPerRequest:     20,
@@ -229,18 +229,18 @@ func (p *AnthropicProvider) registerCapabilities() {
 		}
 
 		// System prompt support for all models
-		registry.RegisterCapability(ProviderAnthropic, model, modexv1.CapabilityType_CAPABILITY_TYPE_SYSTEM_PROMPT,
-			&modexv1.SystemPrompt{
+		registry.RegisterCapability(ProviderAnthropic, model, modex.CapabilityType_CAPABILITY_TYPE_SYSTEM_PROMPT,
+			&modex.SystemPrompt{
 				MaxLength:        100000,
 				SupportsMultiple: true,
 				SupportsCaching:  true,
-				Format:           modexv1.DataFormat_DATA_FORMAT_PLAIN,
+				Format:           modex.DataFormat_DATA_FORMAT_PLAIN,
 			})
 	}
 }
 
 // HasCapability checks if a capability is supported
-func (p *AnthropicProvider) HasCapability(capability modexv1.CapabilityType, model string) bool {
+func (p *AnthropicProvider) HasCapability(capability modex.CapabilityType, model string) bool {
 	targetModel := p.model
 	if model != "" {
 		targetModel = model
@@ -288,7 +288,7 @@ func (p *AnthropicProvider) PrepareRequest(req *Request, options map[string]any)
 
 	p.addMessagesToRequestBody(requestBody, req.Messages, options)
 
-	if req.ResponseSchema != nil && p.HasCapability(modexv1.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
+	if req.ResponseSchema != nil && p.HasCapability(modex.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
 		err := p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 		if err != nil {
 			return nil, fmt.Errorf("failed to add structured response: %w", err)
@@ -314,7 +314,7 @@ func (p *AnthropicProvider) PrepareStreamRequest(req *Request, options map[strin
 		model = m
 	}
 
-	if !p.HasCapability(modexv1.CapabilityType_CAPABILITY_TYPE_STREAMING, model) {
+	if !p.HasCapability(modex.CapabilityType_CAPABILITY_TYPE_STREAMING, model) {
 		return nil, errors.New("streaming is not supported by this provider")
 	}
 	requestBody := p.initializeRequestBodyWithModel(model)
@@ -326,7 +326,7 @@ func (p *AnthropicProvider) PrepareStreamRequest(req *Request, options map[strin
 
 	p.addMessagesToRequestBody(requestBody, req.Messages, options)
 
-	if req.ResponseSchema != nil && p.HasCapability(modexv1.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
+	if req.ResponseSchema != nil && p.HasCapability(modex.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
 		err := p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 		if err != nil {
 			return nil, fmt.Errorf("failed to add structured response: %w", err)

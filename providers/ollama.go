@@ -10,7 +10,7 @@ import (
 
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
-	modexv1 "github.com/weave-labs/weave-go/weaveapi/modex/v1"
+	"github.com/weave-labs/weave-go/weaveapi/modex/v1"
 )
 
 // Common parameter keys for Ollama
@@ -131,8 +131,8 @@ func (p *OllamaProvider) registerCapabilities() {
 
 	for _, model := range allModels {
 		// Ollama supports streaming for all models
-		registry.RegisterCapability(ProviderOllama, model, modexv1.CapabilityType_CAPABILITY_TYPE_STREAMING,
-			&modexv1.Streaming{
+		registry.RegisterCapability(ProviderOllama, model, modex.CapabilityType_CAPABILITY_TYPE_STREAMING,
+			&modex.Streaming{
 				SupportsSse:    true,
 				BufferSize:     4096,
 				ChunkDelimiter: "data: ",
@@ -143,14 +143,14 @@ func (p *OllamaProvider) registerCapabilities() {
 		visionModels := []string{"llava", "llava:7b", "llava:13b", "llava:34b", "bakllava", "moondream"}
 		for _, vm := range visionModels {
 			if strings.Contains(model, vm) || model == vm {
-				registry.RegisterCapability(ProviderOllama, model, modexv1.CapabilityType_CAPABILITY_TYPE_VISION,
-					&modexv1.Vision{
+				registry.RegisterCapability(ProviderOllama, model, modex.CapabilityType_CAPABILITY_TYPE_VISION,
+					&modex.Vision{
 						MaxImageSizeBytes: 10 * 1024 * 1024,
-						SupportedFormats: []modexv1.ImageFormat{
-							modexv1.ImageFormat_IMAGE_FORMAT_JPEG,
-							modexv1.ImageFormat_IMAGE_FORMAT_PNG,
-							modexv1.ImageFormat_IMAGE_FORMAT_GIF,
-							modexv1.ImageFormat_IMAGE_FORMAT_WEBP,
+						SupportedFormats: []modex.ImageFormat{
+							modex.ImageFormat_IMAGE_FORMAT_JPEG,
+							modex.ImageFormat_IMAGE_FORMAT_PNG,
+							modex.ImageFormat_IMAGE_FORMAT_GIF,
+							modex.ImageFormat_IMAGE_FORMAT_WEBP,
 						},
 						MaxImagesPerRequest:     1,
 						SupportsImageGeneration: false,
@@ -163,12 +163,12 @@ func (p *OllamaProvider) registerCapabilities() {
 		}
 
 		// System prompt support for all models (basic capability)
-		registry.RegisterCapability(ProviderOllama, model, modexv1.CapabilityType_CAPABILITY_TYPE_SYSTEM_PROMPT,
-			&modexv1.SystemPrompt{
+		registry.RegisterCapability(ProviderOllama, model, modex.CapabilityType_CAPABILITY_TYPE_SYSTEM_PROMPT,
+			&modex.SystemPrompt{
 				MaxLength:        8192,
 				SupportsMultiple: false,
 				SupportsCaching:  false,
-				Format:           modexv1.DataFormat_DATA_FORMAT_PLAIN,
+				Format:           modex.DataFormat_DATA_FORMAT_PLAIN,
 			})
 	}
 
@@ -177,7 +177,7 @@ func (p *OllamaProvider) registerCapabilities() {
 }
 
 // HasCapability checks if a capability is supported
-func (p *OllamaProvider) HasCapability(capability modexv1.CapabilityType, model string) bool {
+func (p *OllamaProvider) HasCapability(capability modex.CapabilityType, model string) bool {
 	targetModel := p.model
 	if model != "" {
 		targetModel = model

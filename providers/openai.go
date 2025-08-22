@@ -11,7 +11,7 @@ import (
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
 	"github.com/weave-labs/gollm/internal/models"
-	modexv1 "github.com/weave-labs/weave-go/weaveapi/modex/v1"
+	"github.com/weave-labs/weave-go/weaveapi/modex/v1"
 )
 
 const (
@@ -151,29 +151,29 @@ func (p *OpenAIProvider) registerCapabilities() {
 		// GPT-4o models - advanced structured response
 		if strings.HasPrefix(model, "gpt-4o") || strings.HasPrefix(model, "gpt-4-turbo") {
 			registry.RegisterCapability(ProviderOpenAI, model,
-				modexv1.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &modexv1.StructuredResponse{
+				modex.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &modex.StructuredResponse{
 					RequiresToolUse:  false,
 					MaxSchemaDepth:   15,
-					SupportedFormats: []modexv1.DataFormat{modexv1.DataFormat_DATA_FORMAT_JSON},
+					SupportedFormats: []modex.DataFormat{modex.DataFormat_DATA_FORMAT_JSON},
 					RequiresJsonMode: true,
 				})
 		} else if strings.HasPrefix(model, "gpt-4") {
 			// Regular GPT-4 models
 			registry.RegisterCapability(ProviderOpenAI, model,
-				modexv1.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &modexv1.StructuredResponse{
+				modex.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &modex.StructuredResponse{
 					RequiresToolUse:  false,
 					MaxSchemaDepth:   15,
-					SupportedFormats: []modexv1.DataFormat{modexv1.DataFormat_DATA_FORMAT_JSON},
+					SupportedFormats: []modex.DataFormat{modex.DataFormat_DATA_FORMAT_JSON},
 					RequiresJsonMode: true,
 				})
 		} else if strings.HasPrefix(model, "gpt-3.5-turbo") {
 			// GPT-3.5 models - limited structured response support
 			if model == "gpt-3.5-turbo-0125" || model == "gpt-3.5-turbo-1106" {
 				registry.RegisterCapability(ProviderOpenAI, model,
-					modexv1.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &modexv1.StructuredResponse{
+					modex.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &modex.StructuredResponse{
 						RequiresToolUse:  false,
 						MaxSchemaDepth:   10,
-						SupportedFormats: []modexv1.DataFormat{modexv1.DataFormat_DATA_FORMAT_JSON},
+						SupportedFormats: []modex.DataFormat{modex.DataFormat_DATA_FORMAT_JSON},
 						RequiresJsonMode: true,
 					})
 			}
@@ -181,36 +181,36 @@ func (p *OpenAIProvider) registerCapabilities() {
 
 		// Function calling
 		if strings.HasPrefix(model, "gpt-4") {
-			registry.RegisterCapability(ProviderOpenAI, model, modexv1.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
-				&modexv1.FunctionCalling{
+			registry.RegisterCapability(ProviderOpenAI, model, modex.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
+				&modex.FunctionCalling{
 					MaxFunctions:      128,
 					SupportsParallel:  true,
 					MaxParallelCalls:  10,
 					SupportsStreaming: true,
 					RequiresToolRole:  false,
-					SupportedParameterTypes: []modexv1.JsonSchemaType{
-						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
-						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
-						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
-						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
-						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					SupportedParameterTypes: []modex.JsonSchemaType{
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
 					},
 					MaxNestingDepth: 10,
 				})
 		} else if strings.HasPrefix(model, "gpt-3.5-turbo") {
-			registry.RegisterCapability(ProviderOpenAI, model, modexv1.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
-				&modexv1.FunctionCalling{
+			registry.RegisterCapability(ProviderOpenAI, model, modex.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
+				&modex.FunctionCalling{
 					MaxFunctions:      64,
 					SupportsParallel:  true,
 					MaxParallelCalls:  5,
 					SupportsStreaming: false,
 					RequiresToolRole:  false,
-					SupportedParameterTypes: []modexv1.JsonSchemaType{
-						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
-						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
-						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
-						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
-						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					SupportedParameterTypes: []modex.JsonSchemaType{
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
 					},
 					MaxNestingDepth: 10,
 				})
@@ -218,8 +218,8 @@ func (p *OpenAIProvider) registerCapabilities() {
 
 		// All OpenAI models support streaming (including O1 which was handled above)
 		if !strings.HasPrefix(model, "o1") {
-			registry.RegisterCapability(ProviderOpenAI, model, modexv1.CapabilityType_CAPABILITY_TYPE_STREAMING,
-				&modexv1.Streaming{
+			registry.RegisterCapability(ProviderOpenAI, model, modex.CapabilityType_CAPABILITY_TYPE_STREAMING,
+				&modex.Streaming{
 					SupportsSse:    true,
 					BufferSize:     4096,
 					ChunkDelimiter: "data: ",
@@ -231,12 +231,12 @@ func (p *OpenAIProvider) registerCapabilities() {
 		visionModels := []string{"gpt-4o", "gpt-4-turbo", "gpt-4-vision"}
 		for _, vm := range visionModels {
 			if strings.HasPrefix(model, vm) {
-				registry.RegisterCapability(ProviderOpenAI, model, modexv1.CapabilityType_CAPABILITY_TYPE_VISION,
-					&modexv1.Vision{
+				registry.RegisterCapability(ProviderOpenAI, model, modex.CapabilityType_CAPABILITY_TYPE_VISION,
+					&modex.Vision{
 						MaxImageSizeBytes: 20 * 1024 * 1024,
-						SupportedFormats: []modexv1.ImageFormat{
-							modexv1.ImageFormat_IMAGE_FORMAT_JPEG, modexv1.ImageFormat_IMAGE_FORMAT_PNG,
-							modexv1.ImageFormat_IMAGE_FORMAT_GIF, modexv1.ImageFormat_IMAGE_FORMAT_WEBP,
+						SupportedFormats: []modex.ImageFormat{
+							modex.ImageFormat_IMAGE_FORMAT_JPEG, modex.ImageFormat_IMAGE_FORMAT_PNG,
+							modex.ImageFormat_IMAGE_FORMAT_GIF, modex.ImageFormat_IMAGE_FORMAT_WEBP,
 						},
 						MaxImagesPerRequest:     10,
 						SupportsVideoFrames:     strings.Contains(model, "4o"),
@@ -251,7 +251,7 @@ func (p *OpenAIProvider) registerCapabilities() {
 }
 
 // HasCapability checks if a capability is supported
-func (p *OpenAIProvider) HasCapability(capability modexv1.CapabilityType, model string) bool {
+func (p *OpenAIProvider) HasCapability(capability modex.CapabilityType, model string) bool {
 	targetModel := p.model
 	if model != "" {
 		targetModel = model
@@ -309,7 +309,7 @@ func (p *OpenAIProvider) PrepareRequest(req *Request, options map[string]any) ([
 	p.handleToolsForRequest(requestBody, options)
 
 	// Handle structured response schema
-	if req.ResponseSchema != nil && p.HasCapability(modexv1.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
+	if req.ResponseSchema != nil && p.HasCapability(modex.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
 		p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 	}
 
@@ -398,7 +398,7 @@ func (p *OpenAIProvider) PrepareStreamRequest(req *Request, options map[string]a
 		model = m
 	}
 
-	if !p.HasCapability(modexv1.CapabilityType_CAPABILITY_TYPE_STREAMING, model) {
+	if !p.HasCapability(modex.CapabilityType_CAPABILITY_TYPE_STREAMING, model) {
 		return nil, errors.New("streaming is not supported by this provider")
 	}
 
@@ -419,7 +419,7 @@ func (p *OpenAIProvider) PrepareStreamRequest(req *Request, options map[string]a
 	p.handleToolsForRequest(requestBody, options)
 
 	// Handle structured response schema
-	if req.ResponseSchema != nil && p.HasCapability(modexv1.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
+	if req.ResponseSchema != nil && p.HasCapability(modex.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
 		p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 	}
 

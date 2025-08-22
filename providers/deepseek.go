@@ -12,7 +12,7 @@ import (
 
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
-	modexv1 "github.com/weave-labs/weave-go/weaveapi/modex/v1"
+	"github.com/weave-labs/weave-go/weaveapi/modex/v1"
 )
 
 // Common parameter keys
@@ -133,20 +133,20 @@ func (p *DeepSeekProvider) registerCapabilities() {
 
 	for _, model := range allModels {
 		// Most DeepSeek models support function calling
-		registry.RegisterCapability(ProviderDeepSeek, model, modexv1.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
-			&modexv1.FunctionCalling{
+		registry.RegisterCapability(ProviderDeepSeek, model, modex.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
+			&modex.FunctionCalling{
 				MaxFunctions:      64,
 				SupportsParallel:  true,
 				MaxParallelCalls:  5,
 				RequiresToolRole:  false,
 				SupportsStreaming: false,
-				SupportedParameterTypes: []modexv1.JsonSchemaType{
-					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
-					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
-					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
-					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
-					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
-					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_NULL,
+				SupportedParameterTypes: []modex.JsonSchemaType{
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_NULL,
 				},
 				MaxNestingDepth: 10,
 			})
@@ -156,25 +156,25 @@ func (p *DeepSeekProvider) registerCapabilities() {
 			model == "deepseek-r1" || model == "deepseek-v2.5" ||
 			model == "deepseek-v2-chat" || model == "deepseek-coder-v2-instruct" {
 			registry.RegisterCapability(ProviderDeepSeek, model,
-				modexv1.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &modexv1.StructuredResponse{
+				modex.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &modex.StructuredResponse{
 					RequiresToolUse:  false,
 					MaxSchemaDepth:   10,
-					SupportedFormats: []modexv1.DataFormat{modexv1.DataFormat_DATA_FORMAT_JSON},
+					SupportedFormats: []modex.DataFormat{modex.DataFormat_DATA_FORMAT_JSON},
 					RequiresJsonMode: true,
-					SupportedTypes: []modexv1.JsonSchemaType{
-						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
-						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
-						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
-						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
-						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					SupportedTypes: []modex.JsonSchemaType{
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
 					},
 					MaxProperties: 100,
 				})
 		}
 
 		// All models support streaming
-		registry.RegisterCapability(ProviderDeepSeek, model, modexv1.CapabilityType_CAPABILITY_TYPE_STREAMING,
-			&modexv1.Streaming{
+		registry.RegisterCapability(ProviderDeepSeek, model, modex.CapabilityType_CAPABILITY_TYPE_STREAMING,
+			&modex.Streaming{
 				SupportsSse:    true,
 				BufferSize:     4096,
 				ChunkDelimiter: "data: ",
@@ -182,18 +182,18 @@ func (p *DeepSeekProvider) registerCapabilities() {
 			})
 
 		// System prompt support for all models
-		registry.RegisterCapability(ProviderDeepSeek, model, modexv1.CapabilityType_CAPABILITY_TYPE_SYSTEM_PROMPT,
-			&modexv1.SystemPrompt{
+		registry.RegisterCapability(ProviderDeepSeek, model, modex.CapabilityType_CAPABILITY_TYPE_SYSTEM_PROMPT,
+			&modex.SystemPrompt{
 				MaxLength:        8192,
 				SupportsMultiple: false,
 				SupportsCaching:  false,
-				Format:           modexv1.DataFormat_DATA_FORMAT_PLAIN,
+				Format:           modex.DataFormat_DATA_FORMAT_PLAIN,
 			})
 	}
 }
 
 // HasCapability checks if a capability is supported
-func (p *DeepSeekProvider) HasCapability(capability modexv1.CapabilityType, model string) bool {
+func (p *DeepSeekProvider) HasCapability(capability modex.CapabilityType, model string) bool {
 	targetModel := p.model
 	if model != "" {
 		targetModel = model
