@@ -16,12 +16,13 @@ import (
 
 // Common parameter keys
 const (
-	anthropicKeyMaxTokens     = "max_tokens"
-	anthropicKeyStream        = "stream"
-	anthropicKeySystemPrompt  = "system_prompt"
-	anthropicKeyTools         = "tools"
-	anthropicKeyToolChoice    = "tool_choice"
-	anthropicKeyEnableCaching = "enable_caching"
+	anthropicKeyMaxTokens         = "max_tokens"
+	anthropicKeyStream            = "stream"
+	anthropicKeySystemPrompt      = "system_prompt"
+	anthropicKeyTools             = "tools"
+	anthropicKeyToolChoice        = "tool_choice"
+	anthropicKeyEnableCaching     = "enable_caching"
+	anthropicSystemPromptMaxParts = 3 // Maximum parts for splitting system prompts
 )
 
 // AnthropicProvider implements the Provider interface for Anthropic's Claude API.
@@ -135,7 +136,7 @@ func (p *AnthropicProvider) registerCapabilities() {
 					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
 					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
 				},
-		})
+			})
 
 		// All Claude models support function calling
 		registry.RegisterCapability(ProviderAnthropic, model, modexv1.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
@@ -154,7 +155,7 @@ func (p *AnthropicProvider) registerCapabilities() {
 					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_NULL,
 				},
 				MaxNestingDepth: 10,
-		})
+			})
 
 		// All Claude models support streaming
 		registry.RegisterCapability(ProviderAnthropic, model, modexv1.CapabilityType_CAPABILITY_TYPE_STREAMING,
@@ -162,7 +163,7 @@ func (p *AnthropicProvider) registerCapabilities() {
 				ChunkDelimiter: "\n",
 				SupportsSse:    true,
 				SupportsUsage:  true,
-		})
+			})
 
 		// Claude 3+ models support caching
 		if strings.Contains(model, "claude-3") {
@@ -194,7 +195,7 @@ func (p *AnthropicProvider) registerCapabilities() {
 					MaxResolutionHeight:     8192,
 					SupportsOcr:             true,
 					SupportsObjectDetection: false,
-			})
+				})
 		}
 
 		// System prompt support for all models
@@ -205,13 +206,17 @@ func (p *AnthropicProvider) registerCapabilities() {
 				SupportsCaching:  true,
 				Format:           modexv1.DataFormat_DATA_FORMAT_PLAIN,
 			})
-	}
 
-	// Vision capability for Claude 3 models only
+		// Vision capability for Claude 3 models only
 		if strings.Contains(model, "claude-3") {
 			registry.RegisterCapability(ProviderAnthropic, model, modexv1.CapabilityType_CAPABILITY_TYPE_VISION,
 				&modexv1.Vision{
-					SupportedFormats:        []string{"jpeg", "jpg", "png", "gif", "webp"},
+					SupportedFormats: []modexv1.ImageFormat{
+						modexv1.ImageFormat_IMAGE_FORMAT_JPEG,
+						modexv1.ImageFormat_IMAGE_FORMAT_PNG,
+						modexv1.ImageFormat_IMAGE_FORMAT_GIF,
+						modexv1.ImageFormat_IMAGE_FORMAT_WEBP,
+					},
 					MaxImageSizeBytes:       5 * 1024 * 1024, // 5MB
 					MaxImagesPerRequest:     20,
 					SupportsImageGeneration: false,
@@ -220,17 +225,17 @@ func (p *AnthropicProvider) registerCapabilities() {
 					MaxResolutionHeight:     8192,
 					SupportsOcr:             true,
 					SupportsObjectDetection: false,
-			})
+				})
 		}
 
 		// System prompt support for all models
-	registry.RegisterCapability(ProviderAnthropic, model, modexv1.CapabilityType_CAPABILITY_TYPE_SYSTEM_PROMPT,
-		&modexv1.SystemPrompt{
-			MaxLength:       100000,
-			SupportsMultiple: true,
-			SupportsCaching: true,
-			Format:          "plain",
-		})
+		registry.RegisterCapability(ProviderAnthropic, model, modexv1.CapabilityType_CAPABILITY_TYPE_SYSTEM_PROMPT,
+			&modexv1.SystemPrompt{
+				MaxLength:        100000,
+				SupportsMultiple: true,
+				SupportsCaching:  true,
+				Format:           modexv1.DataFormat_DATA_FORMAT_PLAIN,
+			})
 	}
 }
 
@@ -283,7 +288,7 @@ func (p *AnthropicProvider) PrepareRequest(req *Request, options map[string]any)
 
 	p.addMessagesToRequestBody(requestBody, req.Messages, options)
 
-	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
+	if req.ResponseSchema != nil && p.HasCapability(modexv1.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
 		err := p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 		if err != nil {
 			return nil, fmt.Errorf("failed to add structured response: %w", err)
@@ -309,7 +314,7 @@ func (p *AnthropicProvider) PrepareStreamRequest(req *Request, options map[strin
 		model = m
 	}
 
-	if !p.HasCapability(CapStreaming, model) {
+	if !p.HasCapability(modexv1.CapabilityType_CAPABILITY_TYPE_STREAMING, model) {
 		return nil, errors.New("streaming is not supported by this provider")
 	}
 	requestBody := p.initializeRequestBodyWithModel(model)
@@ -321,7 +326,7 @@ func (p *AnthropicProvider) PrepareStreamRequest(req *Request, options map[strin
 
 	p.addMessagesToRequestBody(requestBody, req.Messages, options)
 
-	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
+	if req.ResponseSchema != nil && p.HasCapability(modexv1.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
 		err := p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 		if err != nil {
 			return nil, fmt.Errorf("failed to add structured response: %w", err)
@@ -489,7 +494,7 @@ func (p *AnthropicProvider) addSystemPromptToRequestBody(requestBody map[string]
 		return
 	}
 
-	parts := splitSystemPrompt(systemPrompt, AnthropicSystemPromptMaxParts)
+	parts := splitSystemPrompt(systemPrompt, anthropicSystemPromptMaxParts)
 	for i, part := range parts {
 		systemMessage := map[string]any{
 			"type": "text",

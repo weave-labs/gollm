@@ -9,6 +9,7 @@ import (
 
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
+	modexv1 "github.com/weave-labs/weave-go/weaveapi/modex/v1"
 )
 
 // Groq-specific parameter keys
@@ -110,37 +111,57 @@ func (p *GroqProvider) registerCapabilities() {
 
 	for _, model := range allModels {
 		// Structured response support - all Groq models
-		registry.RegisterCapability(ProviderGroq, model, CapStructuredResponse, StructuredResponseConfig{
-			RequiresToolUse:  false,
-			MaxSchemaDepth:   10,
-			SupportedFormats: []string{"json"},
-			RequiresJSONMode: true,
-		})
+		registry.RegisterCapability(ProviderGroq, model, modexv1.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE,
+			&modexv1.StructuredResponse{
+				RequiresToolUse:  false,
+				MaxSchemaDepth:   10,
+				SupportedFormats: []modexv1.DataFormat{modexv1.DataFormat_DATA_FORMAT_JSON},
+				RequiresJsonMode: true,
+				SupportedTypes: []modexv1.JsonSchemaType{
+					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+					modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+				},
+				MaxProperties: 100,
+			})
 
 		// Function calling - most Groq models support it (exclude guard models)
 		if !slices.Contains([]string{"llama-guard-3-8b"}, model) {
-			registry.RegisterCapability(ProviderGroq, model, CapFunctionCalling, FunctionCallingConfig{
-				MaxFunctions:      100,
-				SupportsParallel:  true,
-				MaxParallelCalls:  10,
-				SupportsStreaming: true,
-			})
+			registry.RegisterCapability(ProviderGroq, model, modexv1.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
+				&modexv1.FunctionCalling{
+					MaxFunctions:      100,
+					SupportsParallel:  true,
+					MaxParallelCalls:  10,
+					SupportsStreaming: true,
+					RequiresToolRole:  false,
+					SupportedParameterTypes: []modexv1.JsonSchemaType{
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					},
+					MaxNestingDepth: 10,
+				})
 		}
 
 		// Streaming - most models support it
 		if !slices.Contains([]string{"llama-guard-3-8b"}, model) {
-			registry.RegisterCapability(ProviderGroq, model, CapStreaming, StreamingConfig{
-				SupportsSSE:    true,
-				BufferSize:     4096,
-				ChunkDelimiter: "data: ",
-				SupportsUsage:  false,
-			})
+			registry.RegisterCapability(ProviderGroq, model, modexv1.CapabilityType_CAPABILITY_TYPE_STREAMING,
+				&modexv1.Streaming{
+					SupportsSse:    true,
+					BufferSize:     4096,
+					ChunkDelimiter: "data: ",
+					SupportsUsage:  false,
+				})
 		}
 	}
 }
 
 // HasCapability checks if a capability is supported
-func (p *GroqProvider) HasCapability(capability Capability, model string) bool {
+func (p *GroqProvider) HasCapability(capability modexv1.CapabilityType, model string) bool {
 	targetModel := p.model
 	if model != "" {
 		targetModel = model
@@ -238,7 +259,7 @@ func (p *GroqProvider) PrepareStreamRequest(req *Request, options map[string]any
 		model = m
 	}
 
-	if !p.HasCapability(CapStreaming, model) {
+	if !p.HasCapability(modexv1.CapabilityType_CAPABILITY_TYPE_STREAMING, model) {
 		return nil, errors.New("streaming is not supported by this provider")
 	}
 

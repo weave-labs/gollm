@@ -13,6 +13,7 @@ import (
 
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
+	modexv1 "github.com/weave-labs/weave-go/weaveapi/modex/v1"
 )
 
 // Gemini-specific parameter keys
@@ -154,47 +155,79 @@ func (p *GeminiProvider) registerCapabilities() {
 	for _, model := range allModels {
 		// Check if model supports structured response
 		if contains(structuredResponseModels, model) {
-			registry.RegisterCapability(ProviderGemini, model, CapStructuredResponse, StructuredResponseConfig{
-				RequiresToolUse:  false,
-				MaxSchemaDepth:   10,
-				SupportedFormats: []string{"json"},
-				RequiresJSONMode: false,
-			})
+			registry.RegisterCapability(ProviderGemini, model,
+				modexv1.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &modexv1.StructuredResponse{
+					RequiresToolUse:  false,
+					MaxSchemaDepth:   10,
+					SupportedFormats: []modexv1.DataFormat{modexv1.DataFormat_DATA_FORMAT_JSON},
+					RequiresJsonMode: false,
+					SupportedTypes: []modexv1.JsonSchemaType{
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					},
+					MaxProperties: 100,
+				})
 		}
 
 		// Check if model supports function calling
 		if contains(functionCallingModels, model) {
-			registry.RegisterCapability(ProviderGemini, model, CapFunctionCalling, FunctionCallingConfig{
-				MaxFunctions:      64,
-				SupportsParallel:  true,
-				MaxParallelCalls:  5,
-				RequiresToolRole:  false,
-				SupportsStreaming: true,
-			})
+			registry.RegisterCapability(ProviderGemini, model, modexv1.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
+				&modexv1.FunctionCalling{
+					MaxFunctions:      64,
+					SupportsParallel:  true,
+					MaxParallelCalls:  5,
+					RequiresToolRole:  false,
+					SupportsStreaming: true,
+					SupportedParameterTypes: []modexv1.JsonSchemaType{
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					},
+					MaxNestingDepth: 10,
+				})
 		}
 
 		// Check if model supports vision
 		if contains(visionModels, model) {
-			registry.RegisterCapability(ProviderGemini, model, CapVision, VisionConfig{
-				MaxImageSize:        20 * 1024 * 1024, // 20MB
-				SupportedFormats:    []string{"jpeg", "png", "gif", "webp"},
-				MaxImagesPerRequest: 16,
-			})
+			registry.RegisterCapability(ProviderGemini, model, modexv1.CapabilityType_CAPABILITY_TYPE_VISION,
+				&modexv1.Vision{
+					MaxImageSizeBytes: 20 * 1024 * 1024, // 20MB
+					SupportedFormats: []modexv1.ImageFormat{
+						modexv1.ImageFormat_IMAGE_FORMAT_JPEG,
+						modexv1.ImageFormat_IMAGE_FORMAT_PNG,
+						modexv1.ImageFormat_IMAGE_FORMAT_GIF,
+						modexv1.ImageFormat_IMAGE_FORMAT_WEBP,
+					},
+					MaxImagesPerRequest:     16,
+					SupportsImageGeneration: false,
+					SupportsVideoFrames:     false,
+					SupportsOcr:             true,
+					SupportsObjectDetection: false,
+				})
 		}
 
 		// All Gemini models support streaming
-		registry.RegisterCapability(ProviderGemini, model, CapStreaming, StreamingConfig{
-			SupportsSSE:    true,
-			BufferSize:     4096,
-			ChunkDelimiter: "data: ",
-			SupportsUsage:  true,
-		})
+		registry.RegisterCapability(ProviderGemini, model, modexv1.CapabilityType_CAPABILITY_TYPE_STREAMING,
+			&modexv1.Streaming{
+				SupportsSse:    true,
+				BufferSize:     4096,
+				ChunkDelimiter: "data: ",
+				SupportsUsage:  true,
+			})
 
 		// System prompt support for all models
-		registry.RegisterCapability(ProviderGemini, model, CapSystemPrompt, SystemPromptConfig{
-			MaxLength:        32768,
-			SupportsMultiple: false,
-		})
+		registry.RegisterCapability(ProviderGemini, model, modexv1.CapabilityType_CAPABILITY_TYPE_SYSTEM_PROMPT,
+			&modexv1.SystemPrompt{
+				MaxLength:        32768,
+				SupportsMultiple: false,
+				SupportsCaching:  false,
+				Format:           modexv1.DataFormat_DATA_FORMAT_PLAIN,
+			})
 	}
 }
 
@@ -209,7 +242,7 @@ func contains(slice []string, item string) bool {
 }
 
 // HasCapability checks if a capability is supported
-func (p *GeminiProvider) HasCapability(capability Capability, model string) bool {
+func (p *GeminiProvider) HasCapability(capability modexv1.CapabilityType, model string) bool {
 	targetModel := p.model
 	if model != "" {
 		targetModel = model
@@ -306,7 +339,7 @@ func (p *GeminiProvider) PrepareStreamRequest(req *Request, options map[string]a
 		model = m
 	}
 
-	if !p.HasCapability(CapStreaming, model) {
+	if !p.HasCapability(modexv1.CapabilityType_CAPABILITY_TYPE_STREAMING, model) {
 		return nil, errors.New("streaming is not supported by this provider")
 	}
 

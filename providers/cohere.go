@@ -9,6 +9,7 @@ import (
 
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
+	modexv1 "github.com/weave-labs/weave-go/weaveapi/modex/v1"
 )
 
 const (
@@ -96,43 +97,73 @@ func (p *CohereProvider) registerCapabilities() {
 
 		if slices.Contains(structuredResponseModels, model) {
 			// IMPORTANT: Cohere quirk - structured response only via tool calling
-			registry.RegisterCapability(ProviderCohere, model, CapStructuredResponse, StructuredResponseConfig{
-				RequiresToolUse:  true, // THE COHERE QUIRK!
-				MaxSchemaDepth:   5,
-				SupportedFormats: []string{"json"},
-				SystemPromptHint: "You must use the provided tool to structure your response",
-			})
+			registry.RegisterCapability(ProviderCohere, model,
+				modexv1.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &modexv1.StructuredResponse{
+					RequiresToolUse:  true, // THE COHERE QUIRK!
+					MaxSchemaDepth:   5,
+					SupportedFormats: []modexv1.DataFormat{modexv1.DataFormat_DATA_FORMAT_JSON},
+					SystemPromptHint: "You must use the provided tool to structure your response",
+					SupportedTypes: []modexv1.JsonSchemaType{
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					},
+					MaxProperties: 100,
+				})
 		}
 
 		// Function calling support
 		if strings.Contains(model, "command-r") {
-			registry.RegisterCapability(ProviderCohere, model, CapFunctionCalling, FunctionCallingConfig{
-				MaxFunctions:      50,
-				SupportsParallel:  false,
-				RequiresToolRole:  true,
-				SupportsStreaming: true,
-			})
+			registry.RegisterCapability(ProviderCohere, model, modexv1.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
+				&modexv1.FunctionCalling{
+					MaxFunctions:      50,
+					SupportsParallel:  false,
+					RequiresToolRole:  true,
+					SupportsStreaming: true,
+					MaxParallelCalls:  1,
+					SupportedParameterTypes: []modexv1.JsonSchemaType{
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					},
+					MaxNestingDepth: 5,
+				})
 		} else if strings.Contains(model, "command") {
-			registry.RegisterCapability(ProviderCohere, model, CapFunctionCalling, FunctionCallingConfig{
-				MaxFunctions:      20,
-				SupportsParallel:  false,
-				RequiresToolRole:  true,
-				SupportsStreaming: false,
-			})
+			registry.RegisterCapability(ProviderCohere, model, modexv1.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
+				&modexv1.FunctionCalling{
+					MaxFunctions:      20,
+					SupportsParallel:  false,
+					RequiresToolRole:  true,
+					SupportsStreaming: false,
+					MaxParallelCalls:  1,
+					SupportedParameterTypes: []modexv1.JsonSchemaType{
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						modexv1.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					},
+					MaxNestingDepth: 5,
+				})
 		}
 
 		// All Cohere models support streaming
-		registry.RegisterCapability(ProviderCohere, model, CapStreaming, StreamingConfig{
-			SupportsSSE:    true,
-			BufferSize:     8192,
-			ChunkDelimiter: "\n",
-			SupportsUsage:  false,
-		})
+		registry.RegisterCapability(ProviderCohere, model, modexv1.CapabilityType_CAPABILITY_TYPE_STREAMING,
+			&modexv1.Streaming{
+				SupportsSse:    true,
+				BufferSize:     8192,
+				ChunkDelimiter: "\n",
+				SupportsUsage:  false,
+			})
 	}
 }
 
 // HasCapability checks if a capability is supported
-func (p *CohereProvider) HasCapability(capability Capability, model string) bool {
+func (p *CohereProvider) HasCapability(capability modexv1.CapabilityType, model string) bool {
 	targetModel := p.model
 	if model != "" {
 		targetModel = model
@@ -221,7 +252,7 @@ func (p *CohereProvider) PrepareRequest(req *Request, options map[string]any) ([
 		requestBody[cohereKeyPreamble] = systemPrompt
 	}
 
-	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
+	if req.ResponseSchema != nil && p.HasCapability(modexv1.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
 		p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 	}
 
@@ -313,7 +344,7 @@ func (p *CohereProvider) PrepareStreamRequest(req *Request, options map[string]a
 		requestBody[cohereKeyPreamble] = systemPrompt
 	}
 
-	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
+	if req.ResponseSchema != nil && p.HasCapability(modexv1.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
 		p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 	}
 
