@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+const responseParserRetryAttempts = 5 // Retry attempts for response parsing
+
 // ExtractFunctionCalls extracts JSON function calls encapsulated within <function_call> tags.
 // It returns a slice of function call objects, each containing a name and arguments.
 func ExtractFunctionCalls(response string) ([]map[string]any, error) {
@@ -42,7 +44,7 @@ func ExtractFunctionCalls(response string) ([]map[string]any, error) {
 // and any function calls. It returns the cleaned text and a slice of function call JSON strings.
 func CleanResponse(rawResponse string) (string, []string, error) {
 	var cleanedResponse strings.Builder
-	functionCalls := make([]string, 0, ResponseParserRetryAttempts)
+	functionCalls := make([]string, 0, responseParserRetryAttempts)
 
 	// Extract function calls
 	functionCallRegex := regexp.MustCompile(`<function_call>(.*?)</function_call>`)

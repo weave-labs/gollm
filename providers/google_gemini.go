@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/modelcontextprotocol/go-sdk/jsonschema"
-
-	"github.com/weave-labs/gollm/internal/models"
+	"github.com/invopop/jsonschema"
 
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
+	"github.com/weave-labs/gollm/internal/models"
+	"github.com/weave-labs/weave-go/weaveapi/modex/v1"
 )
 
 // Gemini-specific parameter keys
@@ -54,7 +54,7 @@ func NewGeminiProvider(apiKey, model string, extraHeaders map[string]string) *Ge
 		p.extraHeaders[k] = v
 	}
 
-	// Register capabilities based on model
+	// AddCapability capabilities based on model
 	p.registerCapabilities()
 	return p
 }
@@ -93,7 +93,7 @@ func (p *GeminiProvider) Name() string {
 
 // registerCapabilities registers capabilities for all known Google Gemini models
 func (p *GeminiProvider) registerCapabilities() {
-	registry := GetRegistry()
+	registry := GetCapabilityRegistry()
 
 	// Define all known Gemini models
 	allModels := []string{
@@ -154,47 +154,79 @@ func (p *GeminiProvider) registerCapabilities() {
 	for _, model := range allModels {
 		// Check if model supports structured response
 		if contains(structuredResponseModels, model) {
-			registry.Register(ProviderGemini, model, CapStructuredResponse, StructuredResponseConfig{
-				RequiresToolUse:  false,
-				MaxSchemaDepth:   10,
-				SupportedFormats: []string{"json"},
-				RequiresJSONMode: false,
-			})
+			registry.RegisterCapability(ProviderGemini, model,
+				modex.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &modex.StructuredResponse{
+					RequiresToolUse:  false,
+					MaxSchemaDepth:   10,
+					SupportedFormats: []modex.DataFormat{modex.DataFormat_DATA_FORMAT_JSON},
+					RequiresJsonMode: false,
+					SupportedTypes: []modex.JsonSchemaType{
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					},
+					MaxProperties: 100,
+				})
 		}
 
 		// Check if model supports function calling
 		if contains(functionCallingModels, model) {
-			registry.Register(ProviderGemini, model, CapFunctionCalling, FunctionCallingConfig{
-				MaxFunctions:      64,
-				SupportsParallel:  true,
-				MaxParallelCalls:  5,
-				RequiresToolRole:  false,
-				SupportsStreaming: true,
-			})
+			registry.RegisterCapability(ProviderGemini, model, modex.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
+				&modex.FunctionCalling{
+					MaxFunctions:      64,
+					SupportsParallel:  true,
+					MaxParallelCalls:  5,
+					RequiresToolRole:  false,
+					SupportsStreaming: true,
+					SupportedParameterTypes: []modex.JsonSchemaType{
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					},
+					MaxNestingDepth: 10,
+				})
 		}
 
 		// Check if model supports vision
 		if contains(visionModels, model) {
-			registry.Register(ProviderGemini, model, CapVision, VisionConfig{
-				MaxImageSize:        20 * 1024 * 1024, // 20MB
-				SupportedFormats:    []string{"jpeg", "png", "gif", "webp"},
-				MaxImagesPerRequest: 16,
-			})
+			registry.RegisterCapability(ProviderGemini, model, modex.CapabilityType_CAPABILITY_TYPE_VISION,
+				&modex.Vision{
+					MaxImageSizeBytes: 20 * 1024 * 1024, // 20MB
+					SupportedFormats: []modex.ImageFormat{
+						modex.ImageFormat_IMAGE_FORMAT_JPEG,
+						modex.ImageFormat_IMAGE_FORMAT_PNG,
+						modex.ImageFormat_IMAGE_FORMAT_GIF,
+						modex.ImageFormat_IMAGE_FORMAT_WEBP,
+					},
+					MaxImagesPerRequest:     16,
+					SupportsImageGeneration: false,
+					SupportsVideoFrames:     false,
+					SupportsOcr:             true,
+					SupportsObjectDetection: false,
+				})
 		}
 
 		// All Gemini models support streaming
-		registry.Register(ProviderGemini, model, CapStreaming, StreamingConfig{
-			SupportsSSE:    true,
-			BufferSize:     4096,
-			ChunkDelimiter: "data: ",
-			SupportsUsage:  true,
-		})
+		registry.RegisterCapability(ProviderGemini, model, modex.CapabilityType_CAPABILITY_TYPE_STREAMING,
+			&modex.Streaming{
+				SupportsSse:    true,
+				BufferSize:     4096,
+				ChunkDelimiter: "data: ",
+				SupportsUsage:  true,
+			})
 
 		// System prompt support for all models
-		registry.Register(ProviderGemini, model, CapSystemPrompt, SystemPromptConfig{
-			MaxLength:        32768,
-			SupportsMultiple: false,
-		})
+		registry.RegisterCapability(ProviderGemini, model, modex.CapabilityType_CAPABILITY_TYPE_SYSTEM_PROMPT,
+			&modex.SystemPrompt{
+				MaxLength:        32768,
+				SupportsMultiple: false,
+				SupportsCaching:  false,
+				Format:           modex.DataFormat_DATA_FORMAT_PLAIN,
+			})
 	}
 }
 
@@ -209,12 +241,12 @@ func contains(slice []string, item string) bool {
 }
 
 // HasCapability checks if a capability is supported
-func (p *GeminiProvider) HasCapability(capability Capability, model string) bool {
+func (p *GeminiProvider) HasCapability(capability modex.CapabilityType, model string) bool {
 	targetModel := p.model
 	if model != "" {
 		targetModel = model
 	}
-	return GetRegistry().HasCapability(ProviderGemini, targetModel, capability)
+	return GetCapabilityRegistry().HasCapability(ProviderGemini, targetModel, capability)
 }
 
 // Endpoint returns the Google Gemini API endpoint URL.
@@ -306,7 +338,7 @@ func (p *GeminiProvider) PrepareStreamRequest(req *Request, options map[string]a
 		model = m
 	}
 
-	if !p.HasCapability(CapStreaming, model) {
+	if !p.HasCapability(modex.CapabilityType_CAPABILITY_TYPE_STREAMING, model) {
 		return nil, errors.New("streaming is not supported by this provider")
 	}
 

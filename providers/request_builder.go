@@ -1,6 +1,6 @@
 package providers
 
-import "github.com/modelcontextprotocol/go-sdk/jsonschema"
+import "github.com/invopop/jsonschema"
 
 // RequestBuilder helps construct Request objects
 type RequestBuilder struct {

@@ -157,7 +157,7 @@ func NewPromptOptimizer(
 	taskDesc string,
 	opts ...OptimizerOption,
 ) *PromptOptimizer {
-	// Register validation functions on first use
+	// AddCapability validation functions on first use
 	registerValidationFunctions()
 
 	optimizer := &PromptOptimizer{

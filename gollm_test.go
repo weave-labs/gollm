@@ -101,7 +101,7 @@ func TestStructuredOutput(t *testing.T) {
 		Return([]byte(`{"messages": [{"role": "user", "content": "test"}]}`), nil)
 	mockProvider.On("ParseResponse", mock.Anything).Return(expectedJSON, nil)
 
-	// Register the mock provider
+	// AddCapability the mock provider
 	registry := providers.NewProviderRegistry()
 	registry.Register("mock", &mockProviderFactory{mockProvider: mockProvider})
 

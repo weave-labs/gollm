@@ -9,6 +9,7 @@ import (
 
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
+	"github.com/weave-labs/weave-go/weaveapi/modex/v1"
 )
 
 // Groq-specific parameter keys
@@ -50,7 +51,7 @@ func NewGroqProvider(apiKey, model string, extraHeaders map[string]string) *Groq
 		logger:       logging.NewLogger(logging.LogLevelInfo),
 	}
 
-	// Register capabilities based on model
+	// AddCapability capabilities based on model
 	p.registerCapabilities()
 	return p
 }
@@ -68,7 +69,7 @@ func (p *GroqProvider) Name() string {
 
 // registerCapabilities registers capabilities for all known Groq models
 func (p *GroqProvider) registerCapabilities() {
-	registry := GetRegistry()
+	registry := GetCapabilityRegistry()
 
 	// Define all known Groq models
 	allModels := []string{
@@ -110,42 +111,62 @@ func (p *GroqProvider) registerCapabilities() {
 
 	for _, model := range allModels {
 		// Structured response support - all Groq models
-		registry.Register(ProviderGroq, model, CapStructuredResponse, StructuredResponseConfig{
-			RequiresToolUse:  false,
-			MaxSchemaDepth:   10,
-			SupportedFormats: []string{"json"},
-			RequiresJSONMode: true,
-		})
+		registry.RegisterCapability(ProviderGroq, model, modex.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE,
+			&modex.StructuredResponse{
+				RequiresToolUse:  false,
+				MaxSchemaDepth:   10,
+				SupportedFormats: []modex.DataFormat{modex.DataFormat_DATA_FORMAT_JSON},
+				RequiresJsonMode: true,
+				SupportedTypes: []modex.JsonSchemaType{
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+					modex.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+				},
+				MaxProperties: 100,
+			})
 
 		// Function calling - most Groq models support it (exclude guard models)
 		if !slices.Contains([]string{"llama-guard-3-8b"}, model) {
-			registry.Register(ProviderGroq, model, CapFunctionCalling, FunctionCallingConfig{
-				MaxFunctions:      100,
-				SupportsParallel:  true,
-				MaxParallelCalls:  10,
-				SupportsStreaming: true,
-			})
+			registry.RegisterCapability(ProviderGroq, model, modex.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
+				&modex.FunctionCalling{
+					MaxFunctions:      100,
+					SupportsParallel:  true,
+					MaxParallelCalls:  10,
+					SupportsStreaming: true,
+					RequiresToolRole:  false,
+					SupportedParameterTypes: []modex.JsonSchemaType{
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						modex.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					},
+					MaxNestingDepth: 10,
+				})
 		}
 
 		// Streaming - most models support it
 		if !slices.Contains([]string{"llama-guard-3-8b"}, model) {
-			registry.Register(ProviderGroq, model, CapStreaming, StreamingConfig{
-				SupportsSSE:    true,
-				BufferSize:     4096,
-				ChunkDelimiter: "data: ",
-				SupportsUsage:  false,
-			})
+			registry.RegisterCapability(ProviderGroq, model, modex.CapabilityType_CAPABILITY_TYPE_STREAMING,
+				&modex.Streaming{
+					SupportsSse:    true,
+					BufferSize:     4096,
+					ChunkDelimiter: "data: ",
+					SupportsUsage:  false,
+				})
 		}
 	}
 }
 
 // HasCapability checks if a capability is supported
-func (p *GroqProvider) HasCapability(capability Capability, model string) bool {
+func (p *GroqProvider) HasCapability(capability modex.CapabilityType, model string) bool {
 	targetModel := p.model
 	if model != "" {
 		targetModel = model
 	}
-	return GetRegistry().HasCapability(ProviderGroq, targetModel, capability)
+	return GetCapabilityRegistry().HasCapability(ProviderGroq, targetModel, capability)
 }
 
 // Endpoint returns the Groq API endpoint URL.
@@ -238,7 +259,7 @@ func (p *GroqProvider) PrepareStreamRequest(req *Request, options map[string]any
 		model = m
 	}
 
-	if !p.HasCapability(CapStreaming, model) {
+	if !p.HasCapability(modex.CapabilityType_CAPABILITY_TYPE_STREAMING, model) {
 		return nil, errors.New("streaming is not supported by this provider")
 	}
 

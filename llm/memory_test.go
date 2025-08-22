@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/weave-labs/gollm/providers"
+	"github.com/weave-labs/weave-go/weaveapi/modex/v1"
 
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
@@ -56,7 +56,7 @@ func (p *MockProvider) HandleFunctionCalls(body []byte) ([]byte, error)         
 func (p *MockProvider) SetDefaultOptions(cfg *config.Config)                         {}
 func (p *MockProvider) SetOption(key string, value any)                              {}
 func (p *MockProvider) SetLogger(logger logging.Logger)                              { p.logger = logger }
-func (p *MockProvider) HasCapability(cap providers.Capability, model ...string) bool { return false }
+func (p *MockProvider) HasCapability(cap modex.CapabilityType, model ...string) bool { return false }
 func (p *MockProvider) PrepareStreamRequest(prompt string, options map[string]any) ([]byte, error) {
 	return []byte(`{}`), nil
 }
@@ -123,7 +123,9 @@ func (l *MockLLM) GenerateWithSchema(
 func (l *MockLLM) GenerateStream(ctx context.Context, prompt *Prompt, opts ...GenerateOption) (TokenStream, error) {
 	return nil, errors.New("streaming not supported")
 }
-func (l *MockLLM) SupportsStreaming() bool { return l.provider.HasCapability(providers.CapStreaming) }
+func (l *MockLLM) SupportsStreaming() bool {
+	return l.provider.HasCapability(modex.CapabilityType_CAPABILITY_TYPE_STREAMING)
+}
 func (l *MockLLM) SetOption(key string, value any) {
 	if key == "structured_messages" {
 		if messages, ok := value.([]MemoryMessage); ok {
