@@ -69,7 +69,7 @@ func NewOpenRouterProvider(apiKey, model string, extraHeaders map[string]string)
 		logger:       logging.NewLogger(logging.LogLevelInfo),
 	}
 
-	// Register capabilities based on model
+	// AddCapability capabilities based on model
 	p.registerCapabilities()
 	return p
 }
@@ -86,13 +86,13 @@ func (p *OpenRouterProvider) Name() string {
 
 // registerCapabilities registers capabilities for all known OpenRouter models
 func (p *OpenRouterProvider) registerCapabilities() {
-	registry := GetRegistry()
+	registry := GetCapabilityRegistry()
 
 	// Get all structured response models and function calling models
 	structuredResponseModels := p.getStructuredResponseModels()
 	functionCallingModels := p.getFunctionCallingModels()
 
-	// Register capabilities for all models we know about
+	// AddCapability capabilities for all models we know about
 	allModels := make(map[string]bool)
 	for _, model := range structuredResponseModels {
 		allModels[model] = true
@@ -114,11 +114,11 @@ func (p *OpenRouterProvider) registerCapabilities() {
 		allModels[model] = true
 	}
 
-	// Register capabilities for all models
+	// AddCapability capabilities for all models
 	for model := range allModels {
 		// Check if model supports structured response
 		if slices.Contains(structuredResponseModels, model) {
-			registry.Register(ProviderOpenRouter, model, CapStructuredResponse, StructuredResponseConfig{
+			registry.RegisterCapability(ProviderOpenRouter, model, CapStructuredResponse, StructuredResponseConfig{
 				RequiresToolUse:  false,
 				MaxSchemaDepth:   10,
 				SupportedFormats: []string{"json_schema"},
@@ -128,7 +128,7 @@ func (p *OpenRouterProvider) registerCapabilities() {
 
 		// Check if model supports function calling
 		if slices.Contains(functionCallingModels, model) {
-			registry.Register(ProviderOpenRouter, model, CapFunctionCalling, FunctionCallingConfig{
+			registry.RegisterCapability(ProviderOpenRouter, model, CapFunctionCalling, FunctionCallingConfig{
 				MaxFunctions:      128,
 				SupportsParallel:  true,
 				MaxParallelCalls:  10,
@@ -138,7 +138,7 @@ func (p *OpenRouterProvider) registerCapabilities() {
 		}
 
 		// All OpenRouter models support streaming
-		registry.Register(ProviderOpenRouter, model, CapStreaming, StreamingConfig{
+		registry.RegisterCapability(ProviderOpenRouter, model, CapStreaming, StreamingConfig{
 			SupportsSSE:    true,
 			BufferSize:     4096,
 			ChunkDelimiter: "data: ",
@@ -153,7 +153,7 @@ func (p *OpenRouterProvider) HasCapability(capability Capability, model string) 
 	if model != "" {
 		targetModel = model
 	}
-	return GetRegistry().HasCapability(ProviderOpenRouter, targetModel, capability)
+	return GetCapabilityRegistry().HasCapability(ProviderOpenRouter, targetModel, capability)
 }
 
 // Endpoint returns the OpenRouter API endpoint URL for chat completions.

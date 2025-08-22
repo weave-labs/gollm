@@ -46,7 +46,7 @@ func NewCohereProvider(apiKey, model string, extraHeaders map[string]string) *Co
 		logger:       logging.NewLogger(logging.LogLevelInfo),
 	}
 
-	// Register capabilities based on model
+	// AddCapability capabilities based on model
 	p.registerCapabilities()
 	return p
 }
@@ -58,7 +58,7 @@ func (p *CohereProvider) Name() string {
 
 // registerCapabilities registers capabilities for all known Cohere models
 func (p *CohereProvider) registerCapabilities() {
-	registry := GetRegistry()
+	registry := GetCapabilityRegistry()
 
 	// Define all known Cohere models
 	allModels := []string{
@@ -96,7 +96,7 @@ func (p *CohereProvider) registerCapabilities() {
 
 		if slices.Contains(structuredResponseModels, model) {
 			// IMPORTANT: Cohere quirk - structured response only via tool calling
-			registry.Register(ProviderCohere, model, CapStructuredResponse, StructuredResponseConfig{
+			registry.RegisterCapability(ProviderCohere, model, CapStructuredResponse, StructuredResponseConfig{
 				RequiresToolUse:  true, // THE COHERE QUIRK!
 				MaxSchemaDepth:   5,
 				SupportedFormats: []string{"json"},
@@ -106,14 +106,14 @@ func (p *CohereProvider) registerCapabilities() {
 
 		// Function calling support
 		if strings.Contains(model, "command-r") {
-			registry.Register(ProviderCohere, model, CapFunctionCalling, FunctionCallingConfig{
+			registry.RegisterCapability(ProviderCohere, model, CapFunctionCalling, FunctionCallingConfig{
 				MaxFunctions:      50,
 				SupportsParallel:  false,
 				RequiresToolRole:  true,
 				SupportsStreaming: true,
 			})
 		} else if strings.Contains(model, "command") {
-			registry.Register(ProviderCohere, model, CapFunctionCalling, FunctionCallingConfig{
+			registry.RegisterCapability(ProviderCohere, model, CapFunctionCalling, FunctionCallingConfig{
 				MaxFunctions:      20,
 				SupportsParallel:  false,
 				RequiresToolRole:  true,
@@ -122,7 +122,7 @@ func (p *CohereProvider) registerCapabilities() {
 		}
 
 		// All Cohere models support streaming
-		registry.Register(ProviderCohere, model, CapStreaming, StreamingConfig{
+		registry.RegisterCapability(ProviderCohere, model, CapStreaming, StreamingConfig{
 			SupportsSSE:    true,
 			BufferSize:     8192,
 			ChunkDelimiter: "\n",
@@ -137,7 +137,7 @@ func (p *CohereProvider) HasCapability(capability Capability, model string) bool
 	if model != "" {
 		targetModel = model
 	}
-	return GetRegistry().HasCapability(ProviderCohere, targetModel, capability)
+	return GetCapabilityRegistry().HasCapability(ProviderCohere, targetModel, capability)
 }
 
 // Endpoint returns the base URL for the Cohere API.

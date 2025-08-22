@@ -50,7 +50,7 @@ func NewGroqProvider(apiKey, model string, extraHeaders map[string]string) *Groq
 		logger:       logging.NewLogger(logging.LogLevelInfo),
 	}
 
-	// Register capabilities based on model
+	// AddCapability capabilities based on model
 	p.registerCapabilities()
 	return p
 }
@@ -68,7 +68,7 @@ func (p *GroqProvider) Name() string {
 
 // registerCapabilities registers capabilities for all known Groq models
 func (p *GroqProvider) registerCapabilities() {
-	registry := GetRegistry()
+	registry := GetCapabilityRegistry()
 
 	// Define all known Groq models
 	allModels := []string{
@@ -110,7 +110,7 @@ func (p *GroqProvider) registerCapabilities() {
 
 	for _, model := range allModels {
 		// Structured response support - all Groq models
-		registry.Register(ProviderGroq, model, CapStructuredResponse, StructuredResponseConfig{
+		registry.RegisterCapability(ProviderGroq, model, CapStructuredResponse, StructuredResponseConfig{
 			RequiresToolUse:  false,
 			MaxSchemaDepth:   10,
 			SupportedFormats: []string{"json"},
@@ -119,7 +119,7 @@ func (p *GroqProvider) registerCapabilities() {
 
 		// Function calling - most Groq models support it (exclude guard models)
 		if !slices.Contains([]string{"llama-guard-3-8b"}, model) {
-			registry.Register(ProviderGroq, model, CapFunctionCalling, FunctionCallingConfig{
+			registry.RegisterCapability(ProviderGroq, model, CapFunctionCalling, FunctionCallingConfig{
 				MaxFunctions:      100,
 				SupportsParallel:  true,
 				MaxParallelCalls:  10,
@@ -129,7 +129,7 @@ func (p *GroqProvider) registerCapabilities() {
 
 		// Streaming - most models support it
 		if !slices.Contains([]string{"llama-guard-3-8b"}, model) {
-			registry.Register(ProviderGroq, model, CapStreaming, StreamingConfig{
+			registry.RegisterCapability(ProviderGroq, model, CapStreaming, StreamingConfig{
 				SupportsSSE:    true,
 				BufferSize:     4096,
 				ChunkDelimiter: "data: ",
@@ -145,7 +145,7 @@ func (p *GroqProvider) HasCapability(capability Capability, model string) bool {
 	if model != "" {
 		targetModel = model
 	}
-	return GetRegistry().HasCapability(ProviderGroq, targetModel, capability)
+	return GetCapabilityRegistry().HasCapability(ProviderGroq, targetModel, capability)
 }
 
 // Endpoint returns the Groq API endpoint URL.

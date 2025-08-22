@@ -50,7 +50,7 @@ func NewOpenAIProvider(apiKey, model string, extraHeaders map[string]string) *Op
 		logger:       logging.NewLogger(logging.LogLevelInfo),
 	}
 
-	// Register capabilities with the global registry
+	// AddCapability capabilities with the global registry
 	p.registerCapabilities()
 	return p
 }
@@ -117,7 +117,7 @@ func (p *OpenAIProvider) Name() string {
 
 // registerCapabilities registers capabilities for all known OpenAI models
 func (p *OpenAIProvider) registerCapabilities() {
-	registry := GetRegistry()
+	registry := GetCapabilityRegistry()
 
 	// Define all known OpenAI models
 	allModels := []string{
@@ -144,18 +144,13 @@ func (p *OpenAIProvider) registerCapabilities() {
 		// O1 models have limited capabilities
 		if strings.HasPrefix(model, "o1") {
 			// Only register streaming for O1 models
-			registry.Register(ProviderOpenAI, model, CapStreaming, StreamingConfig{
-				SupportsSSE:    true,
-				BufferSize:     4096,
-				ChunkDelimiter: "data: ",
-				SupportsUsage:  false,
-			})
+			RegisterStreaming(registry, ProviderOpenAI, model)
 			continue
 		}
 
 		// GPT-4o models - advanced structured response
 		if strings.HasPrefix(model, "gpt-4o") || strings.HasPrefix(model, "gpt-4-turbo") {
-			registry.Register(ProviderOpenAI, model, CapStructuredResponse, StructuredResponseConfig{
+			registry.RegisterCapability(ProviderOpenAI, model, CapStructuredResponse, StructuredResponseConfig{
 				RequiresToolUse:  false,
 				MaxSchemaDepth:   15,
 				SupportedFormats: []string{"json", "json_schema"},
@@ -163,7 +158,7 @@ func (p *OpenAIProvider) registerCapabilities() {
 			})
 		} else if strings.HasPrefix(model, "gpt-4") {
 			// Regular GPT-4 models
-			registry.Register(ProviderOpenAI, model, CapStructuredResponse, StructuredResponseConfig{
+			registry.RegisterCapability(ProviderOpenAI, model, CapStructuredResponse, StructuredResponseConfig{
 				RequiresToolUse:  false,
 				MaxSchemaDepth:   15,
 				SupportedFormats: []string{"json_schema", "json_object"},
@@ -172,7 +167,7 @@ func (p *OpenAIProvider) registerCapabilities() {
 		} else if strings.HasPrefix(model, "gpt-3.5-turbo") {
 			// GPT-3.5 models - limited structured response support
 			if model == "gpt-3.5-turbo-0125" || model == "gpt-3.5-turbo-1106" {
-				registry.Register(ProviderOpenAI, model, CapStructuredResponse, StructuredResponseConfig{
+				registry.RegisterCapability(ProviderOpenAI, model, CapStructuredResponse, StructuredResponseConfig{
 					RequiresToolUse:  false,
 					MaxSchemaDepth:   10,
 					SupportedFormats: []string{"json"},
@@ -183,14 +178,14 @@ func (p *OpenAIProvider) registerCapabilities() {
 
 		// Function calling
 		if strings.HasPrefix(model, "gpt-4") {
-			registry.Register(ProviderOpenAI, model, CapFunctionCalling, FunctionCallingConfig{
+			registry.RegisterCapability(ProviderOpenAI, model, CapFunctionCalling, FunctionCallingConfig{
 				MaxFunctions:      128,
 				SupportsParallel:  true,
 				MaxParallelCalls:  10,
 				SupportsStreaming: true,
 			})
 		} else if strings.HasPrefix(model, "gpt-3.5-turbo") {
-			registry.Register(ProviderOpenAI, model, CapFunctionCalling, FunctionCallingConfig{
+			registry.RegisterCapability(ProviderOpenAI, model, CapFunctionCalling, FunctionCallingConfig{
 				MaxFunctions:      64,
 				SupportsParallel:  true,
 				MaxParallelCalls:  5,
@@ -200,7 +195,7 @@ func (p *OpenAIProvider) registerCapabilities() {
 
 		// All OpenAI models support streaming (including O1 which was handled above)
 		if !strings.HasPrefix(model, "o1") {
-			registry.Register(ProviderOpenAI, model, CapStreaming, StreamingConfig{
+			registry.RegisterCapability(ProviderOpenAI, model, CapStreaming, StreamingConfig{
 				SupportsSSE:    true,
 				BufferSize:     4096,
 				ChunkDelimiter: "data: ",
@@ -212,7 +207,7 @@ func (p *OpenAIProvider) registerCapabilities() {
 		visionModels := []string{"gpt-4o", "gpt-4-turbo", "gpt-4-vision"}
 		for _, vm := range visionModels {
 			if strings.HasPrefix(model, vm) {
-				registry.Register(ProviderOpenAI, model, CapVision, VisionConfig{
+				registry.RegisterCapability(ProviderOpenAI, model, CapVision, VisionConfig{
 					MaxImageSize:        20 * 1024 * 1024,
 					SupportedFormats:    []string{"jpeg", "png", "gif", "webp"},
 					MaxImagesPerRequest: 10,
@@ -230,7 +225,7 @@ func (p *OpenAIProvider) HasCapability(capability Capability, model string) bool
 	if model != "" {
 		targetModel = model
 	}
-	return GetRegistry().HasCapability(ProviderOpenAI, targetModel, capability)
+	return GetCapabilityRegistry().HasCapability(ProviderOpenAI, targetModel, capability)
 }
 
 // Endpoint returns the OpenAI API endpoint URL.

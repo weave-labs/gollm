@@ -7,6 +7,19 @@ package providers
 import (
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
+	modexv1 "github.com/weave-labs/weave-go/weaveapi/modex/v1"
+)
+
+const (
+	ProviderOpenAI     = "openai"
+	ProviderGemini     = "gemini"
+	ProviderAnthropic  = "anthropic"
+	ProviderCohere     = "cohere"
+	ProviderOllama     = "ollama"
+	ProviderGroq       = "groq"
+	ProviderMistral    = "mistral"
+	ProviderDeepSeek   = "deepseek"
+	ProviderOpenRouter = "openrouter"
 )
 
 // Provider defines the complete interface that all LLM providers must implement.
@@ -29,7 +42,7 @@ type Provider interface {
 	ParseStreamResponse(chunk []byte) (*Response, error)
 
 	// Capability checking - accepts optional model parameter to check a specific model's capabilities
-	HasCapability(capability Capability, model string) bool
+	HasCapability(capability modexv1.CapabilityType, model string) bool
 }
 
 // ProviderConfig holds the configuration for a provider

@@ -6,7 +6,7 @@ import (
 
 func TestCapabilities(t *testing.T) {
 	// Clear registry before tests to ensure clean state
-	GetRegistry().Clear()
+	GetCapabilityRegistry().Clear()
 
 	tests := []struct {
 		name     string
@@ -54,7 +54,7 @@ func TestCapabilities(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := tt.provider.HasCapability(tt.cap)
+			got := tt.provider.HasCapability(tt.cap, "")
 			if got != tt.expected {
 				t.Errorf("expected %v, got %v", tt.expected, got)
 			}
@@ -64,12 +64,12 @@ func TestCapabilities(t *testing.T) {
 
 func TestCohereStructuredResponseQuirk(t *testing.T) {
 	// Clear registry before test
-	GetRegistry().Clear()
+	GetCapabilityRegistry().Clear()
 
 	provider := NewCohereProvider("key", "command-r-plus", nil)
 
 	// Should support structured response
-	if !provider.HasCapability(CapStructuredResponse) {
+	if !provider.HasCapability(CapStructuredResponse, "command-r-plus") {
 		t.Fatal("expected Cohere to support structured response")
 	}
 
@@ -90,12 +90,12 @@ func TestCohereStructuredResponseQuirk(t *testing.T) {
 
 func TestOpenAIVisionConfig(t *testing.T) {
 	// Clear registry before test
-	GetRegistry().Clear()
+	GetCapabilityRegistry().Clear()
 
 	provider := NewOpenAIProvider("key", "gpt-4o", nil)
 
 	// Should support vision
-	if !provider.HasCapability(CapVision) {
+	if !provider.HasCapability(CapVision, "") {
 		t.Fatal("expected GPT-4o to support vision")
 	}
 
@@ -121,7 +121,7 @@ func TestOpenAIVisionConfig(t *testing.T) {
 
 func TestOpenAIModelSpecificCapabilities(t *testing.T) {
 	// Clear registry before tests
-	GetRegistry().Clear()
+	GetCapabilityRegistry().Clear()
 
 	tests := []struct {
 		model       string
@@ -140,7 +140,7 @@ func TestOpenAIModelSpecificCapabilities(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.description, func(t *testing.T) {
 			provider := NewOpenAIProvider("key", tt.model, nil)
-			got := provider.HasCapability(tt.capability)
+			got := provider.HasCapability(tt.capability, tt.model)
 			if got != tt.shouldHave {
 				t.Errorf("model %s: expected %v for %s, got %v",
 					tt.model, tt.shouldHave, tt.capability, got)
@@ -151,11 +151,11 @@ func TestOpenAIModelSpecificCapabilities(t *testing.T) {
 
 func TestFunctionCallingConfig(t *testing.T) {
 	// Clear registry before test
-	GetRegistry().Clear()
+	GetCapabilityRegistry().Clear()
 
 	// Test OpenAI GPT-4 function calling config
 	gpt4 := NewOpenAIProvider("key", "gpt-4", nil)
-	if !gpt4.HasCapability(CapFunctionCalling) {
+	if !gpt4.HasCapability(CapFunctionCalling, "") {
 		t.Fatal("expected GPT-4 to support function calling")
 	}
 
@@ -173,7 +173,7 @@ func TestFunctionCallingConfig(t *testing.T) {
 
 	// Test OpenAI GPT-3.5 function calling config
 	gpt35 := NewOpenAIProvider("key", "gpt-3.5-turbo", nil)
-	if !gpt35.HasCapability(CapFunctionCalling) {
+	if !gpt35.HasCapability(CapFunctionCalling, "") {
 		t.Fatal("expected GPT-3.5 to support function calling")
 	}
 
@@ -188,7 +188,7 @@ func TestFunctionCallingConfig(t *testing.T) {
 
 	// Test Cohere function calling config
 	cohere := NewCohereProvider("key", "command-r", nil)
-	if !cohere.HasCapability(CapFunctionCalling) {
+	if !cohere.HasCapability(CapFunctionCalling, "") {
 		t.Fatal("expected Cohere to support function calling")
 	}
 
@@ -204,19 +204,19 @@ func TestFunctionCallingConfig(t *testing.T) {
 
 func TestGlobalRegistrySingleton(t *testing.T) {
 	// Clear registry
-	GetRegistry().Clear()
+	GetCapabilityRegistry().Clear()
 
 	// Get registry multiple times
-	registry1 := GetRegistry()
-	registry2 := GetRegistry()
+	registry1 := GetCapabilityRegistry()
+	registry2 := GetCapabilityRegistry()
 
 	// They should be the same instance
 	if registry1 != registry2 {
-		t.Error("expected GetRegistry to return the same instance")
+		t.Error("expected GetCapabilityRegistry to return the same instance")
 	}
 
-	// Register a capability
-	registry1.Register(ProviderOpenAI, "test-model", CapStreaming, StreamingConfig{
+	// AddCapability a capability
+	registry1.RegisterCapability(ProviderOpenAI, "test-model", CapStreaming, StreamingConfig{
 		SupportsSSE: true,
 		BufferSize:  1024,
 	})

@@ -41,12 +41,12 @@ func TestOpenRouterProvider(t *testing.T) {
 
 	t.Run("HasCapability StructuredResponse returns true", func(t *testing.T) {
 		t.Logf("Provider model: %s", provider.model)
-		t.Logf("HasCapability(CapStructuredResponse): %v", provider.HasCapability(CapStructuredResponse))
-		assert.True(t, provider.HasCapability(CapStructuredResponse))
+		t.Logf("HasCapability(CapStructuredResponse): %v", provider.HasCapability(CapStructuredResponse, ""))
+		assert.True(t, provider.HasCapability(CapStructuredResponse, ""))
 	})
 
 	t.Run("HasCapability Streaming returns true", func(t *testing.T) {
-		assert.True(t, provider.HasCapability(CapStreaming))
+		assert.True(t, provider.HasCapability(CapStreaming, ""))
 	})
 
 	t.Run("SetDefaultOptions sets correct options", func(t *testing.T) {

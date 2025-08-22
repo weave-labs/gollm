@@ -57,36 +57,9 @@ func NewDeepSeekProvider(apiKey, model string, extraHeaders map[string]string) *
 		p.extraHeaders[k] = v
 	}
 
-	// Register capabilities based on model
+	// AddCapability capabilities based on model
 	p.registerCapabilities()
 	return p
-}
-
-// SetLogger configures the logger for the DeepSeek provider.
-// This is used for debugging and monitoring API interactions.
-func (p *DeepSeekProvider) SetLogger(logger logging.Logger) {
-	p.logger = logger
-}
-
-// SetOption sets a specific option for the DeepSeek provider.
-// Supported options include:
-//   - temperature: Controls randomness (0.0 to 2.0)
-//   - max_tokens: Maximum tokens in the response
-//   - top_p: Nucleus sampling parameter
-//   - seed: Random seed for deterministic output
-//   - stop: Stop sequences
-func (p *DeepSeekProvider) SetOption(key string, value any) {
-	p.options[key] = value
-}
-
-// SetDefaultOptions configures standard options from the global configuration.
-// This includes temperature, max tokens, and sampling parameters.
-func (p *DeepSeekProvider) SetDefaultOptions(cfg *config.Config) {
-	p.SetOption(deepSeekKeyTemperature, cfg.Temperature)
-	p.SetOption(deepSeekKeyMaxTokens, cfg.MaxTokens)
-	if cfg.Seed != nil {
-		p.SetOption(deepSeekKeySeed, *cfg.Seed)
-	}
 }
 
 // SetLogger configures the logger for the DeepSeek provider.
@@ -123,7 +96,7 @@ func (p *DeepSeekProvider) Name() string {
 
 // registerCapabilities registers capabilities for all known DeepSeek models
 func (p *DeepSeekProvider) registerCapabilities() {
-	registry := GetRegistry()
+	registry := GetCapabilityRegistry()
 
 	// Define all known DeepSeek models
 	allModels := []string{
@@ -159,7 +132,7 @@ func (p *DeepSeekProvider) registerCapabilities() {
 
 	for _, model := range allModels {
 		// Most DeepSeek models support function calling
-		registry.Register(ProviderDeepSeek, model, CapFunctionCalling, FunctionCallingConfig{
+		registry.RegisterCapability(ProviderDeepSeek, model, CapFunctionCalling, FunctionCallingConfig{
 			MaxFunctions:      64,
 			SupportsParallel:  true,
 			MaxParallelCalls:  5,
@@ -171,7 +144,7 @@ func (p *DeepSeekProvider) registerCapabilities() {
 		if model == "deepseek-chat" || model == "deepseek-reasoner" ||
 			model == "deepseek-r1" || model == "deepseek-v2.5" ||
 			model == "deepseek-v2-chat" || model == "deepseek-coder-v2-instruct" {
-			registry.Register(ProviderDeepSeek, model, CapStructuredResponse, StructuredResponseConfig{
+			registry.RegisterCapability(ProviderDeepSeek, model, CapStructuredResponse, StructuredResponseConfig{
 				RequiresToolUse:  false,
 				MaxSchemaDepth:   10,
 				SupportedFormats: []string{"json_object"},
@@ -180,7 +153,7 @@ func (p *DeepSeekProvider) registerCapabilities() {
 		}
 
 		// All models support streaming
-		registry.Register(ProviderDeepSeek, model, CapStreaming, StreamingConfig{
+		registry.RegisterCapability(ProviderDeepSeek, model, CapStreaming, StreamingConfig{
 			SupportsSSE:    true,
 			BufferSize:     4096,
 			ChunkDelimiter: "data: ",
@@ -188,7 +161,7 @@ func (p *DeepSeekProvider) registerCapabilities() {
 		})
 
 		// System prompt support for all models
-		registry.Register(ProviderDeepSeek, model, CapSystemPrompt, SystemPromptConfig{
+		registry.RegisterCapability(ProviderDeepSeek, model, CapSystemPrompt, SystemPromptConfig{
 			MaxLength:        8192,
 			SupportsMultiple: false,
 		})
@@ -201,7 +174,7 @@ func (p *DeepSeekProvider) HasCapability(capability Capability, model string) bo
 	if model != "" {
 		targetModel = model
 	}
-	return GetRegistry().HasCapability(ProviderDeepSeek, targetModel, capability)
+	return GetCapabilityRegistry().HasCapability(ProviderDeepSeek, targetModel, capability)
 }
 
 // Endpoint returns the DeepSeek API endpoint URL.

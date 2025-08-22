@@ -54,7 +54,7 @@ func NewGeminiProvider(apiKey, model string, extraHeaders map[string]string) *Ge
 		p.extraHeaders[k] = v
 	}
 
-	// Register capabilities based on model
+	// AddCapability capabilities based on model
 	p.registerCapabilities()
 	return p
 }
@@ -93,7 +93,7 @@ func (p *GeminiProvider) Name() string {
 
 // registerCapabilities registers capabilities for all known Google Gemini models
 func (p *GeminiProvider) registerCapabilities() {
-	registry := GetRegistry()
+	registry := GetCapabilityRegistry()
 
 	// Define all known Gemini models
 	allModels := []string{
@@ -154,7 +154,7 @@ func (p *GeminiProvider) registerCapabilities() {
 	for _, model := range allModels {
 		// Check if model supports structured response
 		if contains(structuredResponseModels, model) {
-			registry.Register(ProviderGemini, model, CapStructuredResponse, StructuredResponseConfig{
+			registry.RegisterCapability(ProviderGemini, model, CapStructuredResponse, StructuredResponseConfig{
 				RequiresToolUse:  false,
 				MaxSchemaDepth:   10,
 				SupportedFormats: []string{"json"},
@@ -164,7 +164,7 @@ func (p *GeminiProvider) registerCapabilities() {
 
 		// Check if model supports function calling
 		if contains(functionCallingModels, model) {
-			registry.Register(ProviderGemini, model, CapFunctionCalling, FunctionCallingConfig{
+			registry.RegisterCapability(ProviderGemini, model, CapFunctionCalling, FunctionCallingConfig{
 				MaxFunctions:      64,
 				SupportsParallel:  true,
 				MaxParallelCalls:  5,
@@ -175,7 +175,7 @@ func (p *GeminiProvider) registerCapabilities() {
 
 		// Check if model supports vision
 		if contains(visionModels, model) {
-			registry.Register(ProviderGemini, model, CapVision, VisionConfig{
+			registry.RegisterCapability(ProviderGemini, model, CapVision, VisionConfig{
 				MaxImageSize:        20 * 1024 * 1024, // 20MB
 				SupportedFormats:    []string{"jpeg", "png", "gif", "webp"},
 				MaxImagesPerRequest: 16,
@@ -183,7 +183,7 @@ func (p *GeminiProvider) registerCapabilities() {
 		}
 
 		// All Gemini models support streaming
-		registry.Register(ProviderGemini, model, CapStreaming, StreamingConfig{
+		registry.RegisterCapability(ProviderGemini, model, CapStreaming, StreamingConfig{
 			SupportsSSE:    true,
 			BufferSize:     4096,
 			ChunkDelimiter: "data: ",
@@ -191,7 +191,7 @@ func (p *GeminiProvider) registerCapabilities() {
 		})
 
 		// System prompt support for all models
-		registry.Register(ProviderGemini, model, CapSystemPrompt, SystemPromptConfig{
+		registry.RegisterCapability(ProviderGemini, model, CapSystemPrompt, SystemPromptConfig{
 			MaxLength:        32768,
 			SupportsMultiple: false,
 		})
@@ -214,7 +214,7 @@ func (p *GeminiProvider) HasCapability(capability Capability, model string) bool
 	if model != "" {
 		targetModel = model
 	}
-	return GetRegistry().HasCapability(ProviderGemini, targetModel, capability)
+	return GetCapabilityRegistry().HasCapability(ProviderGemini, targetModel, capability)
 }
 
 // Endpoint returns the Google Gemini API endpoint URL.

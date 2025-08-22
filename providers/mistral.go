@@ -62,7 +62,7 @@ func NewMistralProvider(apiKey, model string, extraHeaders map[string]string) *M
 		logger:       logging.NewLogger(logging.LogLevelInfo),
 	}
 
-	// Register capabilities based on model
+	// AddCapability capabilities based on model
 	p.registerCapabilities()
 	return p
 }
@@ -100,7 +100,7 @@ func (p *MistralProvider) Name() string {
 
 // registerCapabilities registers capabilities for all known Mistral models
 func (p *MistralProvider) registerCapabilities() {
-	registry := GetRegistry()
+	registry := GetCapabilityRegistry()
 
 	// Define all known Mistral models
 	allModels := []string{
@@ -138,7 +138,7 @@ func (p *MistralProvider) registerCapabilities() {
 	for _, model := range allModels {
 		// Structured response - all models except codestral-mamba
 		if model != "codestral-mamba" && model != "mistral-embed" {
-			registry.Register(ProviderMistral, model, CapStructuredResponse, StructuredResponseConfig{
+			registry.RegisterCapability(ProviderMistral, model, CapStructuredResponse, StructuredResponseConfig{
 				MaxSchemaDepth:   10,
 				SupportedFormats: []string{"json_schema"},
 				RequiresJSONMode: true,
@@ -169,7 +169,7 @@ func (p *MistralProvider) registerCapabilities() {
 		}
 
 		if functionCallingSupportedModels[model] {
-			registry.Register(ProviderMistral, model, CapFunctionCalling, FunctionCallingConfig{
+			registry.RegisterCapability(ProviderMistral, model, CapFunctionCalling, FunctionCallingConfig{
 				MaxFunctions:      100,
 				SupportsParallel:  true,
 				MaxParallelCalls:  10,
@@ -179,7 +179,7 @@ func (p *MistralProvider) registerCapabilities() {
 
 		// All Mistral models support streaming (except embed)
 		if model != "mistral-embed" {
-			registry.Register(ProviderMistral, model, CapStreaming, StreamingConfig{
+			registry.RegisterCapability(ProviderMistral, model, CapStreaming, StreamingConfig{
 				SupportsSSE:    true,
 				BufferSize:     4096,
 				ChunkDelimiter: "data: ",
@@ -189,7 +189,7 @@ func (p *MistralProvider) registerCapabilities() {
 
 		// Vision for pixtral models
 		if strings.Contains(model, "pixtral") {
-			registry.Register(ProviderMistral, model, CapVision, VisionConfig{
+			registry.RegisterCapability(ProviderMistral, model, CapVision, VisionConfig{
 				MaxImageSize:        10 * 1024 * 1024,
 				SupportedFormats:    []string{"jpeg", "png", "webp"},
 				MaxImagesPerRequest: 5,
@@ -204,7 +204,7 @@ func (p *MistralProvider) HasCapability(capability Capability, model string) boo
 	if model != "" {
 		targetModel = model
 	}
-	return GetRegistry().HasCapability(ProviderMistral, targetModel, capability)
+	return GetCapabilityRegistry().HasCapability(ProviderMistral, targetModel, capability)
 }
 
 // Endpoint returns the Mistral API endpoint URL.

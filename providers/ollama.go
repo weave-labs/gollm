@@ -56,7 +56,7 @@ func NewOllamaProvider(_ string, model string, extraHeaders map[string]string) *
 		logger:       logging.NewLogger(logging.LogLevelInfo),
 	}
 
-	// Register capabilities based on model
+	// AddCapability capabilities based on model
 	p.registerCapabilities()
 	return p
 }
@@ -68,7 +68,7 @@ func (p *OllamaProvider) Name() string {
 
 // registerCapabilities registers capabilities for all known Ollama models
 func (p *OllamaProvider) registerCapabilities() {
-	registry := GetRegistry()
+	registry := GetCapabilityRegistry()
 
 	// Define common Ollama models (this list is extensive but not exhaustive)
 	allModels := []string{
@@ -130,7 +130,7 @@ func (p *OllamaProvider) registerCapabilities() {
 
 	for _, model := range allModels {
 		// Ollama supports streaming for all models
-		registry.Register(ProviderOllama, model, CapStreaming, StreamingConfig{
+		registry.RegisterCapability(ProviderOllama, model, CapStreaming, StreamingConfig{
 			SupportsSSE:    true,
 			BufferSize:     4096,
 			ChunkDelimiter: "data: ",
@@ -141,7 +141,7 @@ func (p *OllamaProvider) registerCapabilities() {
 		visionModels := []string{"llava", "llava:7b", "llava:13b", "llava:34b", "bakllava", "moondream"}
 		for _, vm := range visionModels {
 			if strings.Contains(model, vm) || model == vm {
-				registry.Register(ProviderOllama, model, CapVision, VisionConfig{
+				registry.RegisterCapability(ProviderOllama, model, CapVision, VisionConfig{
 					MaxImageSize:        10 * 1024 * 1024,
 					SupportedFormats:    []string{"jpeg", "png", "gif", "webp"},
 					MaxImagesPerRequest: 1,
@@ -151,7 +151,7 @@ func (p *OllamaProvider) registerCapabilities() {
 		}
 
 		// System prompt support for all models (basic capability)
-		registry.Register(ProviderOllama, model, CapSystemPrompt, SystemPromptConfig{
+		registry.RegisterCapability(ProviderOllama, model, CapSystemPrompt, SystemPromptConfig{
 			MaxLength:        8192,
 			SupportsMultiple: false,
 		})
@@ -167,7 +167,7 @@ func (p *OllamaProvider) HasCapability(capability Capability, model string) bool
 	if model != "" {
 		targetModel = model
 	}
-	return GetRegistry().HasCapability(ProviderOllama, targetModel, capability)
+	return GetCapabilityRegistry().HasCapability(ProviderOllama, targetModel, capability)
 }
 
 // Endpoint returns the configured Ollama API endpoint URL.
