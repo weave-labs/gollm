@@ -2,24 +2,48 @@
 package providers
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"strings"
+	"io"
+	"slices"
 
-	"github.com/teilomillet/gollm/config"
-	"github.com/teilomillet/gollm/types"
-	"github.com/teilomillet/gollm/utils"
+	"github.com/weave-labs/gollm/config"
+	"github.com/weave-labs/gollm/internal/logging"
+)
+
+const (
+	openRouterDefaultModel = "openrouter/auto"
+
+	// Option keys
+	optionTemperature         = "temperature"
+	optionMaxTokens           = "max_tokens"
+	optionTopP                = "top_p"
+	optionRoute               = "route"
+	optionTransforms          = "transforms"
+	optionProvider            = "provider"
+	optionSeed                = "seed"
+	optionEnableReasoning     = "enable_reasoning"
+	optionFallbackModels      = "fallback_models"
+	optionAutoRoute           = "auto_route"
+	optionProviderPreferences = "provider_preferences"
+	optionSystemMessage       = "system_message"
+	optionTools               = "tools"
+	optionToolChoice          = "tool_choice"
+	optionStream              = "stream"
+	optionEnablePromptCaching = "enable_prompt_caching"
 )
 
 // OpenRouterProvider implements the Provider interface for OpenRouter API.
 // It provides access to multiple LLMs through a single API, with features like
 // model routing, fallbacks, prompt caching.
 type OpenRouterProvider struct {
-	apiKey       string                 // API key for authentication
-	model        string                 // Model identifier (e.g., "openai/gpt-4", "anthropic/claude-3-opus")
-	extraHeaders map[string]string      // Additional HTTP headers
-	options      map[string]interface{} // Model-specific options
-	logger       utils.Logger           // Logger instance
+	apiKey       string            // API key for authentication
+	model        string            // Model identifier (e.g., "openai/gpt-4", "anthropic/claude-3-opus")
+	extraHeaders map[string]string // Additional HTTP headers
+	options      map[string]any    // Model-specific options
+	logger       logging.Logger    // Logger instance
 }
 
 // NewOpenRouterProvider creates a new OpenRouter provider instance.
@@ -32,27 +56,104 @@ type OpenRouterProvider struct {
 //
 // Returns:
 //   - A configured OpenRouter Provider instance
-func NewOpenRouterProvider(apiKey, model string, extraHeaders map[string]string) Provider {
+func NewOpenRouterProvider(apiKey, model string, extraHeaders map[string]string) *OpenRouterProvider {
 	if extraHeaders == nil {
 		extraHeaders = make(map[string]string)
 	}
-	return &OpenRouterProvider{
+
+	p := &OpenRouterProvider{
 		apiKey:       apiKey,
 		model:        model,
 		extraHeaders: extraHeaders,
-		options:      make(map[string]interface{}),
-		logger:       utils.NewLogger(utils.LogLevelInfo),
+		options:      make(map[string]any),
+		logger:       logging.NewLogger(logging.LogLevelInfo),
 	}
+
+	// Register capabilities based on model
+	p.registerCapabilities()
+	return p
 }
 
 // SetLogger configures the logger for the OpenRouter provider.
-func (p *OpenRouterProvider) SetLogger(logger utils.Logger) {
+func (p *OpenRouterProvider) SetLogger(logger logging.Logger) {
 	p.logger = logger
 }
 
 // Name returns the identifier for this provider ("openrouter").
 func (p *OpenRouterProvider) Name() string {
 	return "openrouter"
+}
+
+// registerCapabilities registers capabilities for all known OpenRouter models
+func (p *OpenRouterProvider) registerCapabilities() {
+	registry := GetRegistry()
+
+	// Get all structured response models and function calling models
+	structuredResponseModels := p.getStructuredResponseModels()
+	functionCallingModels := p.getFunctionCallingModels()
+
+	// Register capabilities for all models we know about
+	allModels := make(map[string]bool)
+	for _, model := range structuredResponseModels {
+		allModels[model] = true
+	}
+	for _, model := range functionCallingModels {
+		allModels[model] = true
+	}
+
+	// Add some common models that might not be in the above lists
+	commonModels := []string{
+		"openrouter/auto",
+		"openai/gpt-4", "openai/gpt-3.5-turbo",
+		"anthropic/claude-3-opus", "anthropic/claude-3-sonnet", "anthropic/claude-3-haiku",
+		"meta-llama/llama-3-70b-instruct", "meta-llama/llama-3-8b-instruct",
+		"mistralai/mistral-7b-instruct", "mistralai/mixtral-8x7b-instruct",
+		"google/gemini-pro", "cohere/command-r-plus",
+	}
+	for _, model := range commonModels {
+		allModels[model] = true
+	}
+
+	// Register capabilities for all models
+	for model := range allModels {
+		// Check if model supports structured response
+		if slices.Contains(structuredResponseModels, model) {
+			registry.Register(ProviderOpenRouter, model, CapStructuredResponse, StructuredResponseConfig{
+				RequiresToolUse:  false,
+				MaxSchemaDepth:   10,
+				SupportedFormats: []string{"json_schema"},
+				RequiresJSONMode: false,
+			})
+		}
+
+		// Check if model supports function calling
+		if slices.Contains(functionCallingModels, model) {
+			registry.Register(ProviderOpenRouter, model, CapFunctionCalling, FunctionCallingConfig{
+				MaxFunctions:      128,
+				SupportsParallel:  true,
+				MaxParallelCalls:  10,
+				RequiresToolRole:  false,
+				SupportsStreaming: true,
+			})
+		}
+
+		// All OpenRouter models support streaming
+		registry.Register(ProviderOpenRouter, model, CapStreaming, StreamingConfig{
+			SupportsSSE:    true,
+			BufferSize:     4096,
+			ChunkDelimiter: "data: ",
+			SupportsUsage:  true,
+		})
+	}
+}
+
+// HasCapability checks if a capability is supported
+func (p *OpenRouterProvider) HasCapability(capability Capability, model string) bool {
+	targetModel := p.model
+	if model != "" {
+		targetModel = model
+	}
+	return GetRegistry().HasCapability(ProviderOpenRouter, targetModel, capability)
 }
 
 // Endpoint returns the OpenRouter API endpoint URL for chat completions.
@@ -69,7 +170,7 @@ func (p *OpenRouterProvider) CompletionsEndpoint() string {
 // GenerationEndpoint returns the OpenRouter API endpoint for retrieving generation details.
 // This can be used to query stats like cost and token usage after a request.
 func (p *OpenRouterProvider) GenerationEndpoint(generationID string) string {
-	return fmt.Sprintf("https://openrouter.ai/api/v1/generation?id=%s", generationID)
+	return "https://openrouter.ai/api/v1/generation?id=" + generationID
 }
 
 // SetOption sets a model-specific option for the OpenRouter provider.
@@ -80,16 +181,16 @@ func (p *OpenRouterProvider) GenerationEndpoint(generationID string) string {
 //   - route: Routing strategy (e.g., "fallback", "lowest-latency")
 //   - transforms: Array of transformations to apply to the response
 //   - provider: Provider preferences for routing
-func (p *OpenRouterProvider) SetOption(key string, value interface{}) {
+func (p *OpenRouterProvider) SetOption(key string, value any) {
 	p.options[key] = value
 }
 
 // SetDefaultOptions configures standard options from the global configuration.
-func (p *OpenRouterProvider) SetDefaultOptions(config *config.Config) {
-	p.SetOption("temperature", config.Temperature)
-	p.SetOption("max_tokens", config.MaxTokens)
-	if config.Seed != nil {
-		p.SetOption("seed", *config.Seed)
+func (p *OpenRouterProvider) SetDefaultOptions(cfg *config.Config) {
+	p.SetOption("temperature", cfg.Temperature)
+	p.SetOption("max_tokens", cfg.MaxTokens)
+	if cfg.Seed != nil {
+		p.SetOption("seed", *cfg.Seed)
 	}
 
 	// OpenRouter-specific defaults
@@ -99,18 +200,325 @@ func (p *OpenRouterProvider) SetDefaultOptions(config *config.Config) {
 	}
 }
 
-// SupportsJSONSchema indicates whether this provider supports JSON schema validation.
-// OpenRouter supports JSON schema validation when using supported models.
-func (p *OpenRouterProvider) SupportsJSONSchema() bool {
-	return true
+// getStructuredResponseModels returns all models that support structured responses
+func (p *OpenRouterProvider) getStructuredResponseModels() []string {
+	return []string{
+		"anthropic/claude-3-5-sonnet",
+		"anthropic/claude-3-opus",
+		"anthropic/claude-3-sonnet",
+		"anthropic/claude-3-haiku",
+		"mistralai/mistral-medium-3.1",
+		"openai/gpt-5-chat",
+		"openai/gpt-5",
+		"openai/gpt-5-mini",
+		"openai/gpt-5-nano",
+		"openai/gpt-oss-120b",
+		"openai/gpt-oss-20b:free",
+		"openai/gpt-oss-20b",
+		"mistralai/codestral-2508",
+		"z-ai/glm-4.5-air",
+		"qwen/qwen3-coder",
+		"google/gemini-2.5-flash-lite",
+		"qwen/qwen3-235b-a22b-2507",
+		"moonshotai/kimi-k2",
+		"mistralai/devstral-medium",
+		"mistralai/devstral-small",
+		"cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
+		"x-ai/grok-4",
+		"thedrummer/anubis-70b-v1.1",
+		"inception/mercury",
+		"mistralai/mistral-small-3.2-24b-instruct:free",
+		"mistralai/mistral-small-3.2-24b-instruct",
+		"minimax/minimax-m1",
+		"google/gemini-2.5-flash-lite-preview-06-17",
+		"google/gemini-2.5-flash",
+		"google/gemini-2.5-pro",
+		"openai/o3-pro",
+		"x-ai/grok-3-mini",
+		"x-ai/grok-3",
+		"mistralai/magistral-small-2506",
+		"mistralai/magistral-medium-2506",
+		"mistralai/magistral-medium-2506:thinking",
+		"google/gemini-2.5-pro-preview",
+		"deepseek/deepseek-r1-0528",
+		"mistralai/devstral-small-2505",
+		"openai/codex-mini",
+		"mistralai/mistral-medium-3",
+		"google/gemini-2.5-pro-preview-05-06",
+		"inception/mercury-coder",
+		"qwen/qwen3-4b:free",
+		"qwen/qwen3-30b-a3b",
+		"qwen/qwen3-14b",
+		"qwen/qwen3-32b",
+		"qwen/qwen3-235b-a22b:free",
+		"qwen/qwen3-235b-a22b",
+		"openai/o4-mini-high",
+		"openai/o3",
+		"openai/o4-mini",
+		"openai/gpt-4.1",
+		"openai/gpt-4.1-mini",
+		"openai/gpt-4.1-nano",
+		"meta-llama/llama-4-maverick",
+		"meta-llama/llama-4-scout",
+		"google/gemini-2.5-pro-exp-03-25",
+		"qwen/qwen2.5-vl-32b-instruct",
+		"deepseek/deepseek-chat-v3-0324",
+		"openai/o1-pro",
+		"mistralai/mistral-small-3.1-24b-instruct:free",
+		"mistralai/mistral-small-3.1-24b-instruct",
+		"google/gemma-3-4b-it:free",
+		"google/gemma-3-12b-it:free",
+		"cohere/command-a",
+		"openai/gpt-4o-mini-search-preview",
+		"openai/gpt-4o-search-preview",
+		"google/gemma-3-27b-it:free",
+		"thedrummer/skyfall-36b-v2",
+		"qwen/qwq-32b:free",
+		"qwen/qwq-32b",
+		"google/gemini-2.0-flash-lite-001",
+		"mistralai/mistral-saba",
+		"openai/o3-mini-high",
+		"google/gemini-2.0-flash-001",
+		"qwen/qwen2.5-vl-72b-instruct:free",
+		"openai/o3-mini",
+		"mistralai/mistral-small-24b-instruct-2501",
+		"deepseek/deepseek-r1-distill-llama-70b",
+		"deepseek/deepseek-r1",
+		"mistralai/codestral-2501",
+		"microsoft/phi-4",
+		"deepseek/deepseek-chat",
+		"sao10k/l3.3-euryale-70b",
+		"openai/o1",
+		"cohere/command-r7b-12-2024",
+		"meta-llama/llama-3.3-70b-instruct",
+		"openai/gpt-4o-2024-11-20",
+		"mistralai/mistral-large-2411",
+		"mistralai/mistral-large-2407",
+		"mistralai/pixtral-large-2411",
+		"thedrummer/unslopnemo-12b",
+		"mistralai/ministral-8b",
+		"mistralai/ministral-3b",
+		"qwen/qwen-2.5-7b-instruct",
+		"google/gemini-flash-1.5-8b",
+		"thedrummer/rocinante-12b",
+		"meta-llama/llama-3.2-3b-instruct",
+		"meta-llama/llama-3.2-11b-vision-instruct",
+		"meta-llama/llama-3.2-1b-instruct",
+		"neversleep/llama-3.1-lumimaid-8b",
+		"mistralai/pixtral-12b",
+		"cohere/command-r-plus-08-2024",
+		"cohere/command-r-08-2024",
+		"qwen/qwen-2.5-vl-7b-instruct",
+		"sao10k/l3.1-euryale-70b",
+		"nousresearch/hermes-3-llama-3.1-70b",
+		"openai/chatgpt-4o-latest",
+		"openai/gpt-4o-2024-08-06",
+		"meta-llama/llama-3.1-405b-instruct:free",
+		"meta-llama/llama-3.1-405b-instruct",
+		"meta-llama/llama-3.1-70b-instruct",
+		"meta-llama/llama-3.1-8b-instruct",
+		"mistralai/mistral-nemo",
+		"openai/gpt-4o-mini-2024-07-18",
+		"openai/gpt-4o-mini",
+		"google/gemma-2-27b-it",
+		"nousresearch/hermes-2-pro-llama-3-8b",
+		"google/gemini-flash-1.5",
+		"openai/gpt-4o",
+		"openai/gpt-4o:extended",
+		"openai/gpt-4o-2024-05-13",
+		"mistralai/mixtral-8x22b-instruct",
+		"openai/gpt-4-turbo",
+		"google/gemini-pro-1.5",
+		"cohere/command-r-plus",
+		"cohere/command-r-plus-04-2024",
+		"cohere/command",
+		"cohere/command-r",
+		"cohere/command-r-03-2024",
+		"mistralai/mistral-large",
+		"openai/gpt-3.5-turbo-0613",
+		"openai/gpt-4-turbo-preview",
+		"mistralai/mistral-small",
+		"mistralai/mistral-tiny",
+		"neversleep/noromaid-20b",
+		"alpindale/goliath-120b",
+		"openai/gpt-4-1106-preview",
+		"openai/gpt-3.5-turbo-instruct",
+		"openai/gpt-3.5-turbo-16k",
+		"undi95/remm-slerp-l2-13b",
+		"gryphe/mythomax-l2-13b",
+		"openai/gpt-4",
+		"openai/gpt-3.5-turbo",
+		"openai/gpt-4-0314",
+	}
 }
 
-// Headers returns the HTTP headers required for OpenRouter API requests.
+// Legacy method - uses new capability system internally.
+
+// getFunctionCallingModels returns all models that support function calling
+func (p *OpenRouterProvider) getFunctionCallingModels() []string {
+	return []string{
+		"mistralai/mistral-medium-3.1",
+		"z-ai/glm-4.5v",
+		"ai21/jamba-mini-1.7",
+		"ai21/jamba-large-1.7",
+		"openai/gpt-5",
+		"openai/gpt-5-mini",
+		"openai/gpt-5-nano",
+		"openai/gpt-oss-120b",
+		"openai/gpt-oss-20b",
+		"anthropic/claude-opus-4.1",
+		"mistralai/codestral-2508",
+		"z-ai/glm-4.5",
+		"z-ai/glm-4.5-air:free",
+		"z-ai/glm-4.5-air",
+		"qwen/qwen3-235b-a22b-thinking-2507",
+		"z-ai/glm-4-32b",
+		"qwen/qwen3-coder:free",
+		"qwen/qwen3-coder",
+		"google/gemini-2.5-flash-lite",
+		"qwen/qwen3-235b-a22b-2507",
+		"moonshotai/kimi-k2:free",
+		"moonshotai/kimi-k2",
+		"mistralai/devstral-medium",
+		"mistralai/devstral-small",
+		"x-ai/grok-4",
+		"inception/mercury",
+		"mistralai/mistral-small-3.2-24b-instruct:free",
+		"mistralai/mistral-small-3.2-24b-instruct",
+		"minimax/minimax-m1",
+		"google/gemini-2.5-flash-lite-preview-06-17",
+		"google/gemini-2.5-flash",
+		"google/gemini-2.5-pro",
+		"openai/o3-pro",
+		"x-ai/grok-3-mini",
+		"x-ai/grok-3",
+		"mistralai/magistral-small-2506",
+		"mistralai/magistral-medium-2506",
+		"mistralai/magistral-medium-2506:thinking",
+		"google/gemini-2.5-pro-preview",
+		"deepseek/deepseek-r1-0528",
+		"anthropic/claude-opus-4",
+		"anthropic/claude-sonnet-4",
+		"mistralai/devstral-small-2505:free",
+		"mistralai/devstral-small-2505",
+		"openai/codex-mini",
+		"mistralai/mistral-medium-3",
+		"google/gemini-2.5-pro-preview-05-06",
+		"arcee-ai/virtuoso-large",
+		"inception/mercury-coder",
+		"qwen/qwen3-4b:free",
+		"qwen/qwen3-30b-a3b",
+		"qwen/qwen3-14b",
+		"qwen/qwen3-32b",
+		"qwen/qwen3-235b-a22b:free",
+		"qwen/qwen3-235b-a22b",
+		"openai/o4-mini-high",
+		"openai/o3",
+		"openai/o4-mini",
+		"openai/gpt-4.1",
+		"openai/gpt-4.1-mini",
+		"openai/gpt-4.1-nano",
+		"x-ai/grok-3-mini-beta",
+		"x-ai/grok-3-beta",
+		"meta-llama/llama-4-maverick",
+		"meta-llama/llama-4-scout",
+		"google/gemini-2.5-pro-exp-03-25",
+		"deepseek/deepseek-chat-v3-0324:free",
+		"deepseek/deepseek-chat-v3-0324",
+		"mistralai/mistral-small-3.1-24b-instruct:free",
+		"mistralai/mistral-small-3.1-24b-instruct",
+		"google/gemini-2.0-flash-lite-001",
+		"anthropic/claude-3.7-sonnet",
+		"anthropic/claude-3.7-sonnet:thinking",
+		"anthropic/claude-3.7-sonnet:beta",
+		"mistralai/mistral-saba",
+		"openai/o3-mini-high",
+		"google/gemini-2.0-flash-001",
+		"qwen/qwen-turbo",
+		"qwen/qwen-plus",
+		"qwen/qwen-max",
+		"openai/o3-mini",
+		"mistralai/mistral-small-24b-instruct-2501",
+		"deepseek/deepseek-r1-distill-llama-70b",
+		"deepseek/deepseek-r1",
+		"mistralai/codestral-2501",
+		"deepseek/deepseek-chat",
+		"openai/o1",
+		"x-ai/grok-2-1212",
+		"google/gemini-2.0-flash-exp:free",
+		"meta-llama/llama-3.3-70b-instruct:free",
+		"meta-llama/llama-3.3-70b-instruct",
+		"amazon/nova-lite-v1",
+		"amazon/nova-micro-v1",
+		"amazon/nova-pro-v1",
+		"openai/gpt-4o-2024-11-20",
+		"mistralai/mistral-large-2411",
+		"mistralai/mistral-large-2407",
+		"mistralai/pixtral-large-2411",
+		"thedrummer/unslopnemo-12b",
+		"anthropic/claude-3.5-haiku-20241022",
+		"anthropic/claude-3.5-haiku",
+		"anthropic/claude-3-5-sonnet",
+		"mistralai/ministral-8b",
+		"nvidia/llama-3.1-nemotron-70b-instruct",
+		"google/gemini-flash-1.5-8b",
+		"thedrummer/rocinante-12b",
+		"meta-llama/llama-3.2-3b-instruct",
+		"qwen/qwen-2.5-72b-instruct",
+		"mistralai/pixtral-12b",
+		"cohere/command-r-plus-08-2024",
+		"cohere/command-r-08-2024",
+		"microsoft/phi-3.5-mini-128k-instruct",
+		"nousresearch/hermes-3-llama-3.1-70b",
+		"openai/gpt-4o-2024-08-06",
+		"meta-llama/llama-3.1-405b-instruct",
+		"meta-llama/llama-3.1-70b-instruct",
+		"meta-llama/llama-3.1-8b-instruct",
+		"mistralai/mistral-nemo",
+		"openai/gpt-4o-mini-2024-07-18",
+		"openai/gpt-4o-mini",
+		"anthropic/claude-3.5-sonnet-20240620",
+		"mistralai/mistral-7b-instruct-v0.3",
+		"mistralai/mistral-7b-instruct:free",
+		"mistralai/mistral-7b-instruct",
+		"microsoft/phi-3-mini-128k-instruct",
+		"microsoft/phi-3-medium-128k-instruct",
+		"google/gemini-flash-1.5",
+		"openai/gpt-4o",
+		"openai/gpt-4o:extended",
+		"openai/gpt-4o-2024-05-13",
+		"meta-llama/llama-3-70b-instruct",
+		"meta-llama/llama-3-8b-instruct",
+		"mistralai/mixtral-8x22b-instruct",
+		"openai/gpt-4-turbo",
+		"google/gemini-pro-1.5",
+		"cohere/command-r-plus",
+		"cohere/command-r-plus-04-2024",
+		"cohere/command-r",
+		"anthropic/claude-3-haiku",
+		"anthropic/claude-3-opus",
+		"cohere/command-r-03-2024",
+		"mistralai/mistral-large",
+		"openai/gpt-3.5-turbo-0613",
+		"openai/gpt-4-turbo-preview",
+		"mistralai/mistral-small",
+		"mistralai/mistral-tiny",
+		"mistralai/mixtral-8x7b-instruct",
+		"openai/gpt-4-1106-preview",
+		"mistralai/mistral-7b-instruct-v0.1",
+		"openai/gpt-3.5-turbo-16k",
+		"openai/gpt-4",
+		"openai/gpt-3.5-turbo",
+		"openai/gpt-4-0314",
+	}
+}
+
+// Headers return the HTTP headers required for OpenRouter API requests.
 func (p *OpenRouterProvider) Headers() map[string]string {
 	headers := map[string]string{
 		"Content-Type":  "application/json",
 		"Authorization": "Bearer " + p.apiKey,
-		"HTTP-Referer":  "https://github.com/teilomillet/gollm", // Identify the app to OpenRouter
+		"HTTP-Referer":  "https://github.com/weave-labs/gollm", // Identify the app to OpenRouter
 	}
 
 	// Add OpenRouter specific headers
@@ -125,87 +533,143 @@ func (p *OpenRouterProvider) Headers() map[string]string {
 }
 
 // PrepareRequest creates a chat completion request for the OpenRouter API.
-func (p *OpenRouterProvider) PrepareRequest(prompt string, options map[string]interface{}) ([]byte, error) {
-	// Start with the passed options
-	req := map[string]interface{}{}
-	for k, v := range options {
-		req[k] = v
+func (p *OpenRouterProvider) PrepareRequest(req *Request, options map[string]any) ([]byte, error) {
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
 	}
 
-	// Add model
-	req["model"] = p.model
+	requestBody := p.initializeRequestBodyWithModel(model, options)
+	p.handleModelRouting(requestBody)
+	p.handleProviderPreferences(requestBody)
+	p.addMessages(requestBody, req)
+	p.handleStructuredResponse(requestBody, req, model)
+	p.handleToolsAndOptions(requestBody)
 
-	// Add options from the provider
+	data, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	return data, nil
+}
+
+// initializeRequestBodyWithModel creates the base request body with specified model
+func (p *OpenRouterProvider) initializeRequestBodyWithModel(model string, options map[string]any) map[string]any {
+	requestBody := map[string]any{}
+	for k, v := range options {
+		requestBody[k] = v
+	}
+
+	requestBody["model"] = model
+
 	for k, v := range p.options {
-		if _, exists := req[k]; !exists {
-			req[k] = v
+		if _, exists := requestBody[k]; !exists {
+			requestBody[k] = v
 		}
 	}
 
-	// Handle fallback models if specified
-	if fallbackModels, ok := req["fallback_models"].([]string); ok {
-		req["models"] = append([]string{p.model}, fallbackModels...)
-		delete(req, "fallback_models")
-	} else if autoRoute, ok := req["auto_route"].(bool); ok && autoRoute {
-		// Use OpenRouter's auto-routing capability
-		req["model"] = "openrouter/auto"
-		delete(req, "auto_route")
+	return requestBody
+}
+
+// handleModelRouting processes fallback models and auto-routing options
+func (p *OpenRouterProvider) handleModelRouting(requestBody map[string]any) {
+	if fallbackModels, ok := requestBody[optionFallbackModels].([]string); ok {
+		requestBody["models"] = append([]string{p.model}, fallbackModels...)
+		delete(requestBody, optionFallbackModels)
+	} else if autoRoute, ok := requestBody[optionAutoRoute].(bool); ok && autoRoute {
+		requestBody["model"] = openRouterDefaultModel
+		delete(requestBody, optionAutoRoute)
 	}
+}
 
-	// Handle provider routing preferences if provided
-	if providerPrefs, ok := req["provider_preferences"].(map[string]interface{}); ok {
-		req["provider"] = providerPrefs
-		delete(req, "provider_preferences")
+// handleProviderPreferences processes provider preference options
+func (p *OpenRouterProvider) handleProviderPreferences(requestBody map[string]any) {
+	if providerPrefs, ok := requestBody[optionProviderPreferences].(map[string]any); ok {
+		requestBody[optionProvider] = providerPrefs
+		delete(requestBody, optionProviderPreferences)
 	}
+}
 
-	// Create messages array with system and user messages
-	messages := []map[string]interface{}{}
+// addMessages adds system prompt and messages to the request body
+func (p *OpenRouterProvider) addMessages(requestBody map[string]any, req *Request) {
+	messages := make([]map[string]any, 0, len(req.Messages)+1)
 
-	// If there's a system message in the options, use it
-	if sysMsg, ok := req["system_message"].(string); ok {
-		messages = append(messages, map[string]interface{}{
+	// Add system prompt if provided
+	if req.SystemPrompt != "" {
+		messages = append(messages, map[string]any{
 			"role":    "system",
-			"content": sysMsg,
+			"content": req.SystemPrompt,
 		})
-		delete(req, "system_message")
 	}
 
-	// Add the user prompt
-	messages = append(messages, map[string]interface{}{
-		"role":    "user",
-		"content": prompt,
-	})
+	// Add messages from the Request
+	for _, msg := range req.Messages {
+		openRouterMsg := p.convertMessage(&msg)
+		messages = append(messages, openRouterMsg)
+	}
 
-	req["messages"] = messages
+	requestBody["messages"] = messages
+}
 
+// convertMessage converts a Message to OpenRouter format
+func (p *OpenRouterProvider) convertMessage(msg *Message) map[string]any {
+	openRouterMsg := map[string]any{
+		"role":    msg.Role,
+		"content": msg.Content,
+	}
+	if msg.Name != "" {
+		openRouterMsg["name"] = msg.Name
+	}
+	if msg.ToolCallID != "" {
+		openRouterMsg["tool_call_id"] = msg.ToolCallID
+	}
+	if len(msg.ToolCalls) > 0 {
+		openRouterMsg["tool_calls"] = msg.ToolCalls
+	}
+	return openRouterMsg
+}
+
+// handleStructuredResponse adds structured response schema if supported
+func (p *OpenRouterProvider) handleStructuredResponse(requestBody map[string]any, req *Request, model string) {
+	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
+		requestBody["response_format"] = map[string]any{
+			"type":   "json_object",
+			"schema": req.ResponseSchema,
+		}
+	}
+}
+
+// handleToolsAndOptions processes tools, streaming, and caching options
+func (p *OpenRouterProvider) handleToolsAndOptions(requestBody map[string]any) {
 	// Handle tools/function calling if provided
-	if tools, ok := req["tools"].([]interface{}); ok && len(tools) > 0 {
-		req["tools"] = tools
+	if tools, ok := requestBody[optionTools].([]any); ok && len(tools) > 0 {
+		requestBody[optionTools] = tools
 	}
 
-	if toolChoice, ok := req["tool_choice"]; ok {
-		req["tool_choice"] = toolChoice
+	if toolChoice, ok := requestBody[optionToolChoice]; ok {
+		requestBody[optionToolChoice] = toolChoice
 	}
 
 	// Add streaming if requested
-	if stream, ok := req["stream"].(bool); ok && stream {
-		req["stream"] = true
+	if stream, ok := requestBody[optionStream].(bool); ok && stream {
+		requestBody[optionStream] = true
 	}
 
 	// Handle prompt caching for supported models
-	if caching, ok := req["enable_prompt_caching"].(bool); ok && caching {
+	if caching, ok := requestBody[optionEnablePromptCaching].(bool); ok && caching {
 		// OpenRouter handles caching automatically for supported providers
-		delete(req, "enable_prompt_caching")
+		delete(requestBody, optionEnablePromptCaching)
 	}
-
-	return json.Marshal(req)
 }
 
 // PrepareCompletionRequest creates a text completion request for the OpenRouter API.
 // This uses the legacy completions endpoint rather than chat completions.
-func (p *OpenRouterProvider) PrepareCompletionRequest(prompt string, options map[string]interface{}) ([]byte, error) {
+func (p *OpenRouterProvider) PrepareCompletionRequest(prompt string, options map[string]any) ([]byte, error) {
 	// Start with the passed options
-	req := map[string]interface{}{}
+	req := map[string]any{}
 	for k, v := range options {
 		req[k] = v
 	}
@@ -226,7 +690,7 @@ func (p *OpenRouterProvider) PrepareCompletionRequest(prompt string, options map
 		delete(req, "fallback_models")
 	} else if autoRoute, ok := req["auto_route"].(bool); ok && autoRoute {
 		// Use OpenRouter's auto-routing capability
-		req["model"] = "openrouter/auto"
+		req["model"] = openRouterDefaultModel
 		delete(req, "auto_route")
 	}
 
@@ -234,7 +698,7 @@ func (p *OpenRouterProvider) PrepareCompletionRequest(prompt string, options map
 	req["prompt"] = prompt
 
 	// Handle provider routing preferences if provided
-	if providerPrefs, ok := req["provider_preferences"].(map[string]interface{}); ok {
+	if providerPrefs, ok := req["provider_preferences"].(map[string]any); ok {
 		req["provider"] = providerPrefs
 		delete(req, "provider_preferences")
 	}
@@ -244,90 +708,27 @@ func (p *OpenRouterProvider) PrepareCompletionRequest(prompt string, options map
 		req["stream"] = true
 	}
 
-	return json.Marshal(req)
-}
-
-// PrepareRequestWithSchema creates a request with JSON schema validation.
-func (p *OpenRouterProvider) PrepareRequestWithSchema(prompt string, options map[string]interface{}, schema interface{}) ([]byte, error) {
-	// Start with standard request preparation
-	req := map[string]interface{}{}
-	for k, v := range options {
-		req[k] = v
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
-
-	// Add model
-	req["model"] = p.model
-
-	// Add default options from the provider
-	for k, v := range p.options {
-		if _, exists := req[k]; !exists {
-			req[k] = v
-		}
-	}
-
-	// Handle fallback models if specified
-	if fallbackModels, ok := req["fallback_models"].([]string); ok {
-		req["models"] = append([]string{p.model}, fallbackModels...)
-		delete(req, "fallback_models")
-	} else if autoRoute, ok := req["auto_route"].(bool); ok && autoRoute {
-		// Use OpenRouter's auto-routing capability
-		req["model"] = "openrouter/auto"
-		delete(req, "auto_route")
-	}
-
-	// Handle provider routing preferences if provided
-	if providerPrefs, ok := req["provider_preferences"].(map[string]interface{}); ok {
-		req["provider"] = providerPrefs
-		delete(req, "provider_preferences")
-	}
-
-	// Create messages array with system and user messages
-	messages := []map[string]interface{}{}
-
-	// If there's a system message in the options, use it
-	if sysMsg, ok := req["system_message"].(string); ok {
-		messages = append(messages, map[string]interface{}{
-			"role":    "system",
-			"content": sysMsg,
-		})
-		delete(req, "system_message")
-	}
-
-	// Add the user prompt
-	messages = append(messages, map[string]interface{}{
-		"role":    "user",
-		"content": prompt,
-	})
-
-	req["messages"] = messages
-
-	// Add JSON schema to the response format
-	req["response_format"] = map[string]interface{}{
-		"type":   "json_object",
-		"schema": schema,
-	}
-
-	// Handle tools/function calling if provided
-	if tools, ok := req["tools"].([]interface{}); ok && len(tools) > 0 {
-		req["tools"] = tools
-	}
-
-	if toolChoice, ok := req["tool_choice"]; ok {
-		req["tool_choice"] = toolChoice
-	}
-
-	// Handle prompt caching for supported models
-	if caching, ok := req["enable_prompt_caching"].(bool); ok && caching {
-		// OpenRouter handles caching automatically for supported providers
-		delete(req, "enable_prompt_caching")
-	}
-
-	return json.Marshal(req)
+	return data, nil
 }
 
 // ParseResponse extracts the completion text from the OpenRouter API response.
-func (p *OpenRouterProvider) ParseResponse(body []byte) (string, error) {
-	// First try to parse as chat completion to see if it's a chat/completions response
+func (p *OpenRouterProvider) ParseResponse(body []byte) (*Response, error) {
+	// Try to parse as chat completion first
+	resp, err := p.parseChatCompletion(body)
+	if err == nil {
+		return resp, nil
+	}
+
+	// If chat completion failed, try text completion
+	return p.parseTextCompletion(body, err)
+}
+
+// parseChatCompletion attempts to parse the response as a chat completion
+func (p *OpenRouterProvider) parseChatCompletion(body []byte) (*Response, error) {
 	var chatResp struct {
 		Choices []struct {
 			Message struct {
@@ -341,32 +742,52 @@ func (p *OpenRouterProvider) ParseResponse(body []byte) (string, error) {
 		} `json:"error"`
 		ID    string `json:"id"`
 		Model string `json:"model"`
+		Usage *struct {
+			PromptTokens             int64 `json:"prompt_tokens"`
+			CompletionTokens         int64 `json:"completion_tokens"`
+			TotalTokens              int64 `json:"total_tokens"`
+			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+		} `json:"usage"`
 	}
 
-	// Try to parse as a chat completion
-	chatErr := json.Unmarshal(body, &chatResp)
+	if err := json.Unmarshal(body, &chatResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal chat response: %w", err)
+	}
 
 	// Check if we have valid chat completion choices
-	if chatErr == nil && len(chatResp.Choices) > 0 && chatResp.Choices[0].Message.Content != "" {
-		// This is a chat completion response
-
-		// Check for errors
-		if chatResp.Error.Message != "" {
-			return "", fmt.Errorf("OpenRouter API error: %s", chatResp.Error.Message)
-		}
-
-		// Store the generation ID and used model in the logger for potential later use
-		if chatResp.ID != "" {
-			p.logger.Debug("Generation ID", "id", chatResp.ID)
-		}
-		if chatResp.Model != "" && chatResp.Model != p.model {
-			p.logger.Info("Model used", "requested", p.model, "actual", chatResp.Model)
-		}
-
-		return chatResp.Choices[0].Message.Content, nil
+	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
+		return nil, errors.New("invalid chat completion response")
 	}
 
-	// If it wasn't a valid chat completion, try parsing as a text completion
+	// Check for errors
+	if chatResp.Error.Message != "" {
+		return nil, fmt.Errorf("OpenRouter API error: %s", chatResp.Error.Message)
+	}
+
+	// Log generation info
+	if chatResp.ID != "" {
+		p.logger.Debug("Generation ID", "id", chatResp.ID)
+	}
+	if chatResp.Model != "" && chatResp.Model != p.model {
+		p.logger.Info("Model used", "requested", p.model, "actual", chatResp.Model)
+	}
+
+	resp := &Response{Content: Text{Value: chatResp.Choices[0].Message.Content}}
+	if chatResp.Usage != nil {
+		resp.Usage = NewUsage(
+			chatResp.Usage.PromptTokens,
+			chatResp.Usage.CacheCreationInputTokens+chatResp.Usage.CacheReadInputTokens,
+			chatResp.Usage.CompletionTokens,
+			0,
+			0,
+		)
+	}
+	return resp, nil
+}
+
+// parseTextCompletion attempts to parse the response as a text completion
+func (p *OpenRouterProvider) parseTextCompletion(body []byte, chatErr error) (*Response, error) {
 	var textResp struct {
 		Choices []struct {
 			Text string `json:"text"`
@@ -376,24 +797,31 @@ func (p *OpenRouterProvider) ParseResponse(body []byte) (string, error) {
 		} `json:"error"`
 		ID    string `json:"id"`
 		Model string `json:"model"`
+		Usage *struct {
+			PromptTokens             int64 `json:"prompt_tokens"`
+			CompletionTokens         int64 `json:"completion_tokens"`
+			TotalTokens              int64 `json:"total_tokens"`
+			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+		} `json:"usage"`
 	}
 
 	if err := json.Unmarshal(body, &textResp); err != nil {
-		// If we can't parse as text completion either, return the original chat parsing error
-		return "", fmt.Errorf("error parsing OpenRouter response: %w", chatErr)
+		// Return the original chat parsing error if text parsing also fails
+		return nil, fmt.Errorf("error parsing OpenRouter response: %w", chatErr)
 	}
 
 	// Check for errors
 	if textResp.Error.Message != "" {
-		return "", fmt.Errorf("OpenRouter API error: %s", textResp.Error.Message)
+		return nil, fmt.Errorf("OpenRouter API error: %s", textResp.Error.Message)
 	}
 
 	// Check if we have at least one choice
 	if len(textResp.Choices) == 0 {
-		return "", fmt.Errorf("no completion choices in OpenRouter response")
+		return nil, errors.New("no completion choices in OpenRouter response")
 	}
 
-	// Store the generation ID and used model in the logger for potential later use
+	// Log generation info
 	if textResp.ID != "" {
 		p.logger.Debug("Generation ID (text completion)", "id", textResp.ID)
 	}
@@ -403,55 +831,17 @@ func (p *OpenRouterProvider) ParseResponse(body []byte) (string, error) {
 
 	p.logger.Debug("Parsed text completion", "text", textResp.Choices[0].Text)
 
-	// Return text completion
-	return textResp.Choices[0].Text, nil
-}
-
-// HandleFunctionCalls processes function/tool calling in OpenRouter responses.
-func (p *OpenRouterProvider) HandleFunctionCalls(body []byte) ([]byte, error) {
-	// OpenRouter supports function calling for compatible models
-	var resp struct {
-		Choices []struct {
-			Message struct {
-				Content      string           `json:"content"`
-				FunctionCall *json.RawMessage `json:"function_call"`
-				ToolCalls    []struct {
-					ID       string `json:"id"`
-					Type     string `json:"type"`
-					Function struct {
-						Name      string          `json:"name"`
-						Arguments json.RawMessage `json:"arguments"`
-					} `json:"function"`
-				} `json:"tool_calls"`
-			} `json:"message"`
-			FinishReason string `json:"finish_reason"`
-		} `json:"choices"`
-		ID    string `json:"id"`
-		Model string `json:"model"`
+	resp := &Response{Content: Text{Value: textResp.Choices[0].Text}}
+	if textResp.Usage != nil {
+		resp.Usage = NewUsage(
+			textResp.Usage.PromptTokens,
+			textResp.Usage.CacheCreationInputTokens+textResp.Usage.CacheReadInputTokens,
+			textResp.Usage.CompletionTokens,
+			0,
+			0,
+		)
 	}
-
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("error parsing OpenRouter function call response: %w", err)
-	}
-
-	// Check if we have a function call or tool calls
-	if len(resp.Choices) > 0 {
-		message := &resp.Choices[0].Message
-		if message.FunctionCall != nil || len(message.ToolCalls) > 0 {
-			// Store the generation ID and used model in the logger for potential later use
-			if resp.ID != "" {
-				p.logger.Debug("Generation ID with tool calls", "id", resp.ID)
-			}
-			if resp.Model != "" && resp.Model != p.model {
-				p.logger.Info("Model used for tool calls", "requested", p.model, "actual", resp.Model)
-			}
-
-			// Return the original body since it already contains the function call data
-			return body, nil
-		}
-	}
-
-	return nil, nil
+	return resp, nil
 }
 
 // SetExtraHeaders configures additional HTTP headers for OpenRouter API requests.
@@ -463,26 +853,37 @@ func (p *OpenRouterProvider) SetExtraHeaders(extraHeaders map[string]string) {
 	p.extraHeaders = extraHeaders
 }
 
-// SupportsStreaming indicates whether this provider supports streaming responses.
-func (p *OpenRouterProvider) SupportsStreaming() bool {
-	return true
-}
-
 // PrepareStreamRequest creates a streaming request for the OpenRouter API.
-func (p *OpenRouterProvider) PrepareStreamRequest(prompt string, options map[string]interface{}) ([]byte, error) {
-	streamOptions := make(map[string]interface{})
+func (p *OpenRouterProvider) PrepareStreamRequest(req *Request, options map[string]any) ([]byte, error) {
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
+	}
+
+	if !p.HasCapability(CapStreaming, model) {
+		return nil, errors.New("streaming is not supported by this provider")
+	}
+
+	streamOptions := make(map[string]any)
 	for k, v := range options {
 		streamOptions[k] = v
 	}
-	streamOptions["stream"] = true
-	return p.PrepareRequest(prompt, streamOptions)
+	streamOptions[optionStream] = true
+	return p.PrepareRequest(req, streamOptions)
 }
 
 // ParseStreamResponse processes a chunk from a streaming OpenRouter response.
-func (p *OpenRouterProvider) ParseStreamResponse(chunk []byte) (string, error) {
-	// Skip empty chunks and "[DONE]" markers
-	if len(chunk) == 0 || string(chunk) == "[DONE]" {
-		return "", nil
+func (p *OpenRouterProvider) ParseStreamResponse(chunk []byte) (*Response, error) {
+	// Skip empty chunks
+	if len(bytes.TrimSpace(chunk)) == 0 {
+		return nil, errors.New("empty chunk")
+	}
+	// Handle "[DONE]" marker
+	if bytes.Equal(bytes.TrimSpace(chunk), []byte("[DONE]")) {
+		return nil, io.EOF
 	}
 
 	// Parse the chunk
@@ -514,12 +915,12 @@ func (p *OpenRouterProvider) ParseStreamResponse(chunk []byte) (string, error) {
 	}
 
 	if err := json.Unmarshal(chunk, &resp); err != nil {
-		return "", fmt.Errorf("error parsing OpenRouter stream chunk: %w", err)
+		return nil, fmt.Errorf("malformed response: %w", err)
 	}
 
 	// Check for errors
 	if resp.Error.Message != "" {
-		return "", fmt.Errorf("OpenRouter API streaming error: %s", resp.Error.Message)
+		return nil, fmt.Errorf("OpenRouter API streaming error: %s", resp.Error.Message)
 	}
 
 	// Store the generation ID and used model in the logger for potential later use
@@ -530,118 +931,30 @@ func (p *OpenRouterProvider) ParseStreamResponse(chunk []byte) (string, error) {
 		p.logger.Info("Model used for streaming", "requested", p.model, "actual", resp.Model)
 	}
 
-	// If we have usage information, log it
+	// Prepare usage if present
+	var usage *Usage
 	if resp.Usage != nil {
 		p.logger.Debug("Token usage",
 			"prompt_tokens", resp.Usage.PromptTokens,
 			"completion_tokens", resp.Usage.CompletionTokens,
 			"total_tokens", resp.Usage.TotalTokens)
+		usage = NewUsage(int64(resp.Usage.PromptTokens), 0, int64(resp.Usage.CompletionTokens), 0, 0)
 	}
 
 	// Check if we have at least one choice with content
-	if len(resp.Choices) == 0 {
-		return "", nil
+	if len(resp.Choices) == 0 || resp.Choices[0].Delta.Content == "" {
+		return nil, errors.New("skip token")
 	}
 
-	// Handle tool calls in streaming mode
+	// Handle tool calls in streaming mode (log only)
 	if len(resp.Choices[0].Delta.ToolCalls) > 0 {
-		toolCallData, err := json.Marshal(resp.Choices[0].Delta.ToolCalls)
-		if err == nil {
+		if toolCallData, err := json.Marshal(resp.Choices[0].Delta.ToolCalls); err == nil {
 			p.logger.Debug("Tool call in streaming mode", "data", string(toolCallData))
 		}
 	}
 
-	return resp.Choices[0].Delta.Content, nil
-}
-
-// PrepareRequestWithMessages creates a request with structured message objects.
-func (p *OpenRouterProvider) PrepareRequestWithMessages(messages []types.MemoryMessage, options map[string]interface{}) ([]byte, error) {
-	// Start with the passed options
-	req := map[string]interface{}{}
-	for k, v := range options {
-		req[k] = v
-	}
-
-	// Add model
-	req["model"] = p.model
-
-	// Add options from the provider
-	for k, v := range p.options {
-		if _, exists := req[k]; !exists {
-			req[k] = v
-		}
-	}
-
-	// Handle fallback models if specified
-	if fallbackModels, ok := req["fallback_models"].([]string); ok {
-		req["models"] = append([]string{p.model}, fallbackModels...)
-		delete(req, "fallback_models")
-	} else if autoRoute, ok := req["auto_route"].(bool); ok && autoRoute {
-		// Use OpenRouter's auto-routing capability
-		req["model"] = "openrouter/auto"
-		delete(req, "auto_route")
-	}
-
-	// Handle provider routing preferences if provided
-	if providerPrefs, ok := req["provider_preferences"].(map[string]interface{}); ok {
-		req["provider"] = providerPrefs
-		delete(req, "provider_preferences")
-	}
-
-	// Convert memory messages to OpenRouter format
-	formattedMessages := make([]map[string]interface{}, 0, len(messages))
-	for _, msg := range messages {
-		formattedMsg := map[string]interface{}{
-			"role":    msg.Role,
-			"content": msg.Content,
-		}
-
-		// Handle Anthropic-style prompt caching if enabled
-		if caching, ok := req["enable_prompt_caching"].(bool); ok && caching && msg.Role == "user" {
-			// Check if the message is large enough to benefit from caching
-			if len(msg.Content) > 1000 {
-				// For Anthropic models, we need to use multipart messages with cache_control
-				if strings.HasPrefix(p.model, "anthropic/") {
-					formattedMsg["content"] = []map[string]interface{}{
-						{
-							"type": "text",
-							"text": msg.Content,
-							"cache_control": map[string]string{
-								"type": "ephemeral",
-							},
-						},
-					}
-				}
-			}
-		}
-
-		formattedMessages = append(formattedMessages, formattedMsg)
-	}
-
-	req["messages"] = formattedMessages
-
-	// Handle tools/function calling if provided
-	if tools, ok := req["tools"].([]interface{}); ok && len(tools) > 0 {
-		req["tools"] = tools
-	}
-
-	if toolChoice, ok := req["tool_choice"]; ok {
-		req["tool_choice"] = toolChoice
-	}
-
-	// Remove prompt caching flag as it's been handled
-	delete(req, "enable_prompt_caching")
-
-	// Add streaming if requested
-	if stream, ok := req["stream"].(bool); ok && stream {
-		req["stream"] = true
-	}
-
-	return json.Marshal(req)
-}
-
-func init() {
-	// Register the OpenRouter provider
-	registry := GetDefaultRegistry()
-	registry.Register("openrouter", NewOpenRouterProvider)
+	return &Response{
+		Content: Text{Value: resp.Choices[0].Delta.Content},
+		Usage:   usage,
+	}, nil
 }

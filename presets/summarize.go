@@ -4,30 +4,10 @@ package presets
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
-	"github.com/teilomillet/gollm"
-)
-
-// summarizeTemplate defines a structured prompt template for text summarization.
-// It guides the LLM to provide concise, focused summaries while maintaining
-// essential information and key points from the original text.
-//
-// The template includes:
-// - Clear instruction for summarization
-// - Directives for conciseness and completeness
-// - Structured output format
-var summarizeTemplate = gollm.NewPromptTemplate(
-	"Summarize",
-	"Summarize the given text",
-	"Summarize the following text:\n\n{{.Text}}",
-	gollm.WithPromptOptions(
-		gollm.WithDirectives(
-			"Provide a concise summary",
-			"Capture the main points and key details",
-		),
-		gollm.WithOutput("Summary:"),
-	),
+	"github.com/weave-labs/gollm"
 )
 
 // Summarize generates a concise summary of the provided text while preserving
@@ -100,15 +80,27 @@ var summarizeTemplate = gollm.NewPromptTemplate(
 //   - Error propagation
 //   - Response generation
 func Summarize(ctx context.Context, l gollm.LLM, text string, opts ...gollm.PromptOption) (string, error) {
-	// Validate input
+	summarizeTemplate := gollm.NewPromptTemplate(
+		"Summarize",
+		"Summarize the given text",
+		"Summarize the following text:\n\n{{.Text}}",
+		gollm.WithPromptOptions(
+			gollm.WithDirectives(
+				"Provide a concise summary",
+				"Capture the main points and key details",
+			),
+			gollm.WithOutput("Summary:"),
+		),
+	)
+
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if l == nil {
-		return "", fmt.Errorf("LLM instance cannot be nil")
+		return "", errors.New("LLM instance cannot be nil")
 	}
 
-	prompt, err := summarizeTemplate.Execute(map[string]interface{}{
+	prompt, err := summarizeTemplate.Execute(map[string]any{
 		"Text": text,
 	})
 	if err != nil {
@@ -119,5 +111,5 @@ func Summarize(ctx context.Context, l gollm.LLM, text string, opts ...gollm.Prom
 	if err != nil {
 		return "", fmt.Errorf("failed to generate response: %w", err)
 	}
-	return response, nil
+	return response.AsText(), nil
 }

@@ -4,23 +4,21 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"github.com/weave-labs/gollm/providers"
 	"io"
 	"time"
 )
 
 // StreamToken represents a single token from the streaming response.
 type StreamToken struct {
-	// Text is the actual token text
-	Text string
-
-	// Type indicates the type of token (e.g., "text", "function_call", "error")
-	Type string
-
-	// Index is the position of this token in the sequence
-	Index int
-
-	// Metadata contains provider-specific metadata
-	Metadata map[string]interface{}
+	Metadata     map[string]any
+	Text         string
+	Type         string
+	Index        int
+	InputTokens  int64
+	OutputTokens int64
 }
 
 // TokenStream represents a stream of tokens from the LLM.
@@ -28,66 +26,17 @@ type StreamToken struct {
 type TokenStream interface {
 	// Next returns the next token in the stream.
 	// When the stream is finished, it returns io.EOF.
-	Next(context.Context) (*StreamToken, error)
+	Next(ctx context.Context) (*StreamToken, error)
 
-	// Close releases any resources associated with the stream.
+	// Closer Close releases any resources associated with the stream.
 	io.Closer
-}
-
-// StreamOption is a function type for configuring streaming behavior.
-type StreamOption func(*StreamConfig)
-
-// StreamConfig holds configuration options for streaming.
-type StreamConfig struct {
-	// BufferSize is the size of the token buffer
-	BufferSize int
-
-	// RetryStrategy defines how to handle stream interruptions
-	RetryStrategy RetryStrategy
-}
-
-// RetryStrategy defines how to handle stream interruptions.
-type RetryStrategy interface {
-	// ShouldRetry determines if a retry should be attempted.
-	ShouldRetry(error) bool
-
-	// NextDelay returns the delay before the next retry.
-	NextDelay() time.Duration
-
-	// Reset resets the retry state.
-	Reset()
-}
-
-// DefaultRetryStrategy implements a simple exponential backoff strategy.
-type DefaultRetryStrategy struct {
-	MaxRetries  int
-	InitialWait time.Duration
-	MaxWait     time.Duration
-	attempts    int
-}
-
-func (s *DefaultRetryStrategy) ShouldRetry(err error) bool {
-	return s.attempts < s.MaxRetries
-}
-
-func (s *DefaultRetryStrategy) NextDelay() time.Duration {
-	s.attempts++
-	delay := s.InitialWait * time.Duration(1<<uint(s.attempts-1))
-	if delay > s.MaxWait {
-		delay = s.MaxWait
-	}
-	return delay
-}
-
-func (s *DefaultRetryStrategy) Reset() {
-	s.attempts = 0
 }
 
 // SSEDecoder handles Server-Sent Events (SSE) streaming
 type SSEDecoder struct {
+	err     error
 	reader  *bufio.Scanner
 	current Event
-	err     error
 }
 
 type Event struct {
@@ -136,7 +85,7 @@ func (d *SSEDecoder) Next() bool {
 			event = string(value)
 		case "data":
 			data.Write(value)
-			data.WriteRune('\n')
+			data.WriteByte('\n')
 		}
 	}
 
@@ -149,4 +98,113 @@ func (d *SSEDecoder) Event() Event {
 
 func (d *SSEDecoder) Err() error {
 	return d.err
+}
+
+// providerStream implements TokenStream for a specific provider
+type providerStream struct {
+	provider      providers.Provider
+	retryStrategy RetryStrategy
+	decoder       *SSEDecoder
+	config        *GenerateConfig
+	buffer        []byte
+	currentIndex  int
+}
+
+func newProviderStream(reader io.ReadCloser, provider providers.Provider, cfg *GenerateConfig) *providerStream {
+	return &providerStream{
+		decoder:       NewSSEDecoder(reader),
+		provider:      provider,
+		config:        cfg,
+		buffer:        make([]byte, 0, DefaultStreamBufferSize),
+		currentIndex:  0,
+		retryStrategy: cfg.RetryStrategy,
+	}
+}
+
+func (s *providerStream) Next(ctx context.Context) (*StreamToken, error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
+		default:
+			token, shouldContinue, err := s.processNextEvent()
+			if err != nil {
+				return nil, err
+			}
+			if shouldContinue {
+				continue
+			}
+			return token, nil
+		}
+	}
+}
+
+// processNextEvent handles the next event from the decoder
+func (s *providerStream) processNextEvent() (*StreamToken, bool, error) {
+	if !s.decoder.Next() {
+		return s.handleDecoderEnd()
+	}
+
+	event := s.decoder.Event()
+	if len(event.Data) == 0 {
+		return nil, true, nil // continue
+	}
+
+	return s.processEventData(event)
+}
+
+// handleDecoderEnd handles the case when decoder has no more events
+func (s *providerStream) handleDecoderEnd() (*StreamToken, bool, error) {
+	if err := s.decoder.Err(); err != nil {
+		if s.retryStrategy.ShouldRetry(err) {
+			time.Sleep(s.retryStrategy.NextDelay())
+			return nil, true, nil // continue
+		}
+		return nil, false, err
+	}
+	return nil, false, io.EOF
+}
+
+// processEventData processes the event data and creates a stream token
+func (s *providerStream) processEventData(event Event) (*StreamToken, bool, error) {
+	resp, err := s.provider.ParseStreamResponse(event.Data)
+	if err != nil {
+		if err.Error() == "skip resp" {
+			return nil, true, nil // continue
+		}
+		if errors.Is(err, io.EOF) {
+			return nil, false, io.EOF
+		}
+		return nil, true, nil // continue - Not enough data or malformed
+	}
+
+	return s.createStreamToken(event, resp), false, nil
+}
+
+// createStreamToken creates a stream token from the response
+func (s *providerStream) createStreamToken(event Event, resp *providers.Response) *StreamToken {
+	streamToken := &StreamToken{
+		Text:  "",
+		Type:  event.Type,
+		Index: s.currentIndex,
+	}
+
+	if resp == nil {
+		return streamToken
+	}
+
+	if resp.Content != nil {
+		streamToken.Text = resp.AsText()
+	}
+
+	if resp.Usage != nil {
+		streamToken.InputTokens = resp.Usage.InputTokens
+		streamToken.OutputTokens = resp.Usage.OutputTokens
+	}
+
+	return streamToken
+}
+
+func (s *providerStream) Close() error {
+	return nil
 }

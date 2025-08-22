@@ -1,64 +1,66 @@
-// Package providers implements LLM provider interfaces and implementations.
 package providers
 
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 
-	"github.com/teilomillet/gollm/config"
-	"github.com/teilomillet/gollm/types"
-	"github.com/teilomillet/gollm/utils"
+	"github.com/weave-labs/gollm/config"
+	"github.com/weave-labs/gollm/internal/logging"
+	"github.com/weave-labs/gollm/internal/models"
+)
+
+// Common parameter keys
+const (
+	anthropicKeyMaxTokens     = "max_tokens"
+	anthropicKeyStream        = "stream"
+	anthropicKeySystemPrompt  = "system_prompt"
+	anthropicKeyTools         = "tools"
+	anthropicKeyToolChoice    = "tool_choice"
+	anthropicKeyEnableCaching = "enable_caching"
 )
 
 // AnthropicProvider implements the Provider interface for Anthropic's Claude API.
 // It supports Claude models and provides access to Anthropic's language model capabilities,
 // including structured output and system prompts.
 type AnthropicProvider struct {
-	apiKey       string                 // API key for authentication
-	model        string                 // Model identifier (e.g., "claude-3-opus", "claude-3-sonnet")
-	extraHeaders map[string]string      // Additional HTTP headers
-	options      map[string]interface{} // Model-specific options
-	logger       utils.Logger           // Logger instance
+	logger       logging.Logger
+	extraHeaders map[string]string
+	options      map[string]any
+	apiKey       string
+	model        string
 }
 
 // NewAnthropicProvider creates a new Anthropic provider instance.
 // It initializes the provider with the given API key, model, and optional headers.
-//
-// Parameters:
-//   - apiKey: Anthropic API key for authentication
-//   - model: The model to use (e.g., "claude-3-opus", "claude-3-sonnet")
-//   - extraHeaders: Additional HTTP headers for requests
-//
-// Returns:
-//   - A configured Anthropic Provider instance
-func NewAnthropicProvider(apiKey, model string, extraHeaders map[string]string) Provider {
-	provider := &AnthropicProvider{
+func NewAnthropicProvider(apiKey, model string, extraHeaders map[string]string) *AnthropicProvider {
+	p := &AnthropicProvider{
 		apiKey:       apiKey,
 		model:        model,
 		extraHeaders: make(map[string]string),
-		options:      make(map[string]interface{}),
-		logger:       utils.NewLogger(utils.LogLevelInfo), // Default logger
+		options:      make(map[string]any),
+		logger:       logging.NewLogger(logging.LogLevelInfo),
 	}
 
-	// Copy the provided extraHeaders
 	for k, v := range extraHeaders {
-		provider.extraHeaders[k] = v
+		p.extraHeaders[k] = v
 	}
 
-	// Add the caching header if it's not already present
-	if _, exists := provider.extraHeaders["anthropic-beta"]; !exists {
-		provider.extraHeaders["anthropic-beta"] = "prompt-caching-2024-07-31"
+	if _, exists := p.extraHeaders["anthropic-beta"]; !exists {
+		p.extraHeaders["anthropic-beta"] = "prompt-caching-2024-07-31"
 	}
 
-	return provider
+	// Register capabilities based on model
+	p.registerCapabilities()
+	return p
 }
 
 // SetLogger configures the logger for the Anthropic provider.
 // This is used for debugging and monitoring API interactions.
-func (p *AnthropicProvider) SetLogger(logger utils.Logger) {
+func (p *AnthropicProvider) SetLogger(logger logging.Logger) {
 	p.logger = logger
 }
 
@@ -69,17 +71,17 @@ func (p *AnthropicProvider) SetLogger(logger utils.Logger) {
 //   - top_p: Nucleus sampling parameter
 //   - top_k: Top-k sampling parameter
 //   - stop_sequences: Custom stop sequences
-func (p *AnthropicProvider) SetOption(key string, value interface{}) {
+func (p *AnthropicProvider) SetOption(key string, value any) {
 	p.options[key] = value
 }
 
 // SetDefaultOptions configures standard options from the global configuration.
 // This includes temperature, max tokens, and sampling parameters.
-func (p *AnthropicProvider) SetDefaultOptions(config *config.Config) {
-	p.SetOption("temperature", config.Temperature)
-	p.SetOption("max_tokens", config.MaxTokens)
-	if config.Seed != nil {
-		p.SetOption("seed", *config.Seed)
+func (p *AnthropicProvider) SetDefaultOptions(cfg *config.Config) {
+	p.SetOption("temperature", cfg.Temperature)
+	p.SetOption(anthropicKeyMaxTokens, cfg.MaxTokens)
+	if cfg.Seed != nil {
+		p.SetOption("seed", *cfg.Seed)
 	}
 }
 
@@ -88,19 +90,111 @@ func (p *AnthropicProvider) Name() string {
 	return "anthropic"
 }
 
+// registerCapabilities registers capabilities for all known Anthropic models
+func (p *AnthropicProvider) registerCapabilities() {
+	registry := GetRegistry()
+
+	// Define all known Anthropic Claude models
+	allModels := []string{
+		// Claude 3.5 models
+		"claude-3-5-sonnet-20241022",
+		"claude-3-5-sonnet-20240620",
+		"claude-3-5-haiku-20241022",
+
+		// Claude 3 models
+		"claude-3-opus-20240229",
+		"claude-3-sonnet-20240229",
+		"claude-3-haiku-20240307",
+
+		// Legacy Claude models
+		"claude-2.1",
+		"claude-2.0",
+		"claude-instant-1.2",
+
+		// Generic model names (latest)
+		"claude-3-5-sonnet",
+		"claude-3-5-haiku",
+		"claude-3-opus",
+		"claude-3-sonnet",
+		"claude-3-haiku",
+	}
+
+	for _, model := range allModels {
+		// All Claude models support structured responses
+		registry.Register(ProviderAnthropic, model, CapStructuredResponse, StructuredResponseConfig{
+			RequiresToolUse:  false,
+			MaxSchemaDepth:   15,
+			SupportedFormats: []string{"json"},
+			SystemPromptHint: "You must respond with a JSON object that strictly adheres to this schema",
+			RequiresJSONMode: false,
+		})
+
+		// All Claude models support function calling
+		registry.Register(ProviderAnthropic, model, CapFunctionCalling, FunctionCallingConfig{
+			MaxFunctions:      64,
+			SupportsParallel:  true,
+			MaxParallelCalls:  10,
+			RequiresToolRole:  false,
+			SupportsStreaming: true,
+		})
+
+		// All Claude models support streaming
+		registry.Register(ProviderAnthropic, model, CapStreaming, StreamingConfig{
+			SupportsSSE:    true,
+			BufferSize:     4096,
+			ChunkDelimiter: "data: ",
+			SupportsUsage:  true,
+		})
+
+		// Claude 3+ models support caching (legacy models have limited support)
+		if strings.Contains(model, "claude-3") {
+			registry.Register(ProviderAnthropic, model, CapCaching, CachingConfig{
+				MaxCacheSize:     1024 * 1024, // 1MB
+				CacheTTLSeconds:  3600,        // 1 hour
+				CacheKeyStrategy: "ephemeral",
+			})
+		} else {
+			// Legacy models have basic caching
+			registry.Register(ProviderAnthropic, model, CapCaching, CachingConfig{
+				MaxCacheSize:     512 * 1024, // 512KB
+				CacheTTLSeconds:  1800,       // 30 minutes
+				CacheKeyStrategy: "ephemeral",
+			})
+		}
+
+		// Vision capability for Claude 3+ models
+		if strings.Contains(model, "claude-3") {
+			registry.Register(ProviderAnthropic, model, CapVision, VisionConfig{
+				MaxImageSize:        5 * 1024 * 1024, // 5MB
+				SupportedFormats:    []string{"jpeg", "png", "gif", "webp"},
+				MaxImagesPerRequest: 20,
+			})
+		}
+
+		// System prompt support for all models
+		registry.Register(ProviderAnthropic, model, CapSystemPrompt, SystemPromptConfig{
+			MaxLength:        32768,
+			SupportsMultiple: true,
+		})
+	}
+}
+
+// HasCapability checks if a capability is supported
+func (p *AnthropicProvider) HasCapability(capability Capability, model string) bool {
+	targetModel := p.model
+	if model != "" {
+		targetModel = model
+	}
+	return GetRegistry().HasCapability(ProviderAnthropic, targetModel, capability)
+}
+
 // Endpoint returns the Anthropic API endpoint URL.
 // For API version 2024-02-15, this is "https://api.anthropic.com/v1/messages".
 func (p *AnthropicProvider) Endpoint() string {
 	return "https://api.anthropic.com/v1/messages"
 }
 
-// SupportsJSONSchema indicates that Anthropic supports structured output
-// through its system prompts and response formatting capabilities.
-func (p *AnthropicProvider) SupportsJSONSchema() bool {
-	return true
-}
-
-// Headers returns the required HTTP headers for Anthropic API requests.
+// Headers return the required HTTP headers for Anthropic API requests.
 // This includes:
 //   - x-api-key: API key for authentication
 //   - anthropic-version: API version identifier
@@ -116,110 +210,404 @@ func (p *AnthropicProvider) Headers() map[string]string {
 	return headers
 }
 
-// PrepareRequest creates the request body for an Anthropic API call.
-// It handles:
-//   - Message formatting
-//   - System prompts
-//   - Response formatting
-//   - Model-specific options
-//
-// Parameters:
-//   - prompt: The input text or conversation
-//   - options: Additional parameters for the request
-//
-// Returns:
-//   - Serialized JSON request body
-//   - Any error encountered during preparation
-func (p *AnthropicProvider) PrepareRequest(prompt string, options map[string]interface{}) ([]byte, error) {
-	requestBody := map[string]interface{}{
-		"model":      p.model,
-		"max_tokens": p.options["max_tokens"],
-		"system":     []map[string]interface{}{},
-		"messages":   []map[string]interface{}{},
+// PrepareRequest creates the request body for an Anthropic API call
+func (p *AnthropicProvider) PrepareRequest(req *Request, options map[string]any) ([]byte, error) {
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
 	}
 
-	// Handle system prompt
-	systemPrompt := ""
+	requestBody := p.initializeRequestBodyWithModel(model)
+
+	systemPrompt := p.extractSystemPromptFromRequest(req, options)
+	systemPrompt = p.handleToolsForRequest(requestBody, systemPrompt, options)
+	p.addSystemPromptToRequestBody(requestBody, systemPrompt)
+
+	p.addMessagesToRequestBody(requestBody, req.Messages, options)
+
+	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
+		err := p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
+		if err != nil {
+			return nil, fmt.Errorf("failed to add structured response: %w", err)
+		}
+	}
+
+	p.addRemainingOptions(requestBody, options)
+
+	data, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+	return data, nil
+}
+
+// PrepareStreamRequest creates a request body for streaming API calls
+func (p *AnthropicProvider) PrepareStreamRequest(req *Request, options map[string]any) ([]byte, error) {
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
+	}
+
+	if !p.HasCapability(CapStreaming, model) {
+		return nil, errors.New("streaming is not supported by this provider")
+	}
+	requestBody := p.initializeRequestBodyWithModel(model)
+	requestBody[anthropicKeyStream] = true
+
+	systemPrompt := p.extractSystemPromptFromRequest(req, options)
+	systemPrompt = p.handleToolsForRequest(requestBody, systemPrompt, options)
+	p.addSystemPromptToRequestBody(requestBody, systemPrompt)
+
+	p.addMessagesToRequestBody(requestBody, req.Messages, options)
+
+	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
+		err := p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
+		if err != nil {
+			return nil, fmt.Errorf("failed to add structured response: %w", err)
+		}
+	}
+
+	p.addRemainingOptions(requestBody, options)
+
+	data, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+	return data, nil
+}
+
+// ParseResponse extracts the generated text from the Anthropic API response.
+// It handles various response formats and error cases.
+func (p *AnthropicProvider) ParseResponse(body []byte) (*Response, error) {
+	p.logger.Debug("Raw API anthropicResponse: %s", string(body))
+
+	anthropicResponse := anthropicResponse{}
+
+	if err := json.Unmarshal(body, &anthropicResponse); err != nil {
+		return nil, fmt.Errorf("error parsing anthropicResponse: %w", err)
+	}
+	if len(anthropicResponse.Content) == 0 {
+		return nil, errors.New("empty anthropicResponse from LLM")
+	}
+
+	p.logger.Debug("Number of content blocks: %d", len(anthropicResponse.Content))
+	p.logger.Debug("Stop reason: %s", anthropicResponse.StopReason)
+
+	// Process content blocks
+	result, err := p.processAnthropicContent(anthropicResponse.Content)
+	if err != nil {
+		return nil, err
+	}
+
+	p.logger.Debug("Final anthropicResponse: %s", result)
+
+	response := &Response{
+		Content: Text{result},
+		Usage: NewUsage(
+			anthropicResponse.Usage.InputTokens,
+			anthropicResponse.Usage.CacheCreationInputTokens,
+			anthropicResponse.Usage.OutputTokens,
+			0,
+			anthropicResponse.Usage.CacheReadInputTokens,
+		),
+	}
+
+	return response, nil
+}
+
+// ParseStreamResponse processes single SSE JSON "data:" payload from Anthropic Messages streaming.
+// It returns either a text Content token, a Usage-only token, io.EOF for message_stop, or "skip token".
+func (p *AnthropicProvider) ParseStreamResponse(chunk []byte) (*Response, error) {
+	// Skip empty lines
+	if len(bytes.TrimSpace(chunk)) == 0 {
+		return nil, errors.New("empty chunk")
+	}
+	// [DONE] guard (if your decoder ever passes this through)
+	if bytes.Equal(bytes.TrimSpace(chunk), []byte("[DONE]")) {
+		return nil, io.EOF
+	}
+
+	var ev anthropicEvent
+	if err := json.Unmarshal(chunk, &ev); err != nil {
+		return nil, fmt.Errorf("malformed event: %w", err)
+	}
+
+	switch ev.Type {
+	case "content_block_delta":
+		// Only emit text deltas as tokens
+		if ev.Delta != nil && ev.Delta.Type == "text_delta" && ev.Delta.Text != "" {
+			return &Response{
+				Content: Text{Value: ev.Delta.Text},
+			}, nil
+		}
+		return nil, errors.New("skip token")
+
+	case "message_start":
+		// Usage may be present on the embedded message
+		if ev.Message != nil && ev.Message.Usage != nil {
+			return &Response{
+				Usage: NewUsage(
+					ev.Message.Usage.InputTokens,
+					ev.Message.Usage.CacheCreationInputTokens,
+					ev.Message.Usage.OutputTokens,
+					0,
+					ev.Message.Usage.CacheReadInputTokens,
+				),
+			}, nil
+		}
+		return nil, errors.New("skip token")
+
+	case "message_delta":
+		// Usage may be present at the top level; counts are cumulative
+		if ev.Usage != nil {
+			return &Response{
+				Usage: NewUsage(
+					ev.Usage.InputTokens,
+					ev.Usage.CacheCreationInputTokens,
+					ev.Usage.OutputTokens,
+					0,
+					ev.Usage.CacheReadInputTokens,
+				),
+			}, nil
+		}
+		return nil, errors.New("skip token")
+
+	case "message_stop":
+		return nil, io.EOF
+
+	// Ignore pings, starts/stops of blocks, tool JSON partials, thinking/signature, etc.
+	default:
+		return nil, errors.New("skip token")
+	}
+}
+
+// SetExtraHeaders configures additional HTTP headers for API requests.
+// This allows for custom headers needed for specific features or requirements.
+func (p *AnthropicProvider) SetExtraHeaders(extraHeaders map[string]string) {
+	p.extraHeaders = extraHeaders
+}
+
+// initializeRequestBodyWithModel creates the base request structure with specified model
+func (p *AnthropicProvider) initializeRequestBodyWithModel(model string) map[string]any {
+	return map[string]any{
+		"model":               model,
+		anthropicKeyMaxTokens: p.options[anthropicKeyMaxTokens],
+		"system":              []map[string]any{},
+		"messages":            []map[string]any{},
+	}
+}
+
+// extractSystemPromptFromRequest gets system prompt from request or options
+func (p *AnthropicProvider) extractSystemPromptFromRequest(req *Request, options map[string]any) string {
+	// Priority: Request.SystemPrompt > options["system_prompt"]
+	if req.SystemPrompt != "" {
+		return req.SystemPrompt
+	}
 	if sp, ok := options["system_prompt"].(string); ok && sp != "" {
-		systemPrompt = sp
+		return sp
+	}
+	return ""
+}
+
+// handleToolsForRequest processes tools and updates system prompt if needed
+func (p *AnthropicProvider) handleToolsForRequest(
+	requestBody map[string]any,
+	systemPrompt string,
+	options map[string]any,
+) string {
+	tools, ok := options[anthropicKeyTools].([]models.Tool)
+	if !ok || len(tools) == 0 {
+		return systemPrompt
+	}
+	return p.processTools(tools, requestBody, systemPrompt, options)
+}
+
+// addSystemPromptToRequestBody adds the system prompt to the request
+func (p *AnthropicProvider) addSystemPromptToRequestBody(requestBody map[string]any, systemPrompt string) {
+	if systemPrompt == "" {
+		return
 	}
 
-	// If we have tools, add tool usage instructions to the system prompt
-	if tools, ok := options["tools"].([]utils.Tool); ok && len(tools) > 0 {
-		anthropicTools := make([]map[string]interface{}, len(tools))
-		for i, tool := range tools {
-			anthropicTools[i] = map[string]interface{}{
-				"name":         tool.Function.Name,
-				"description":  tool.Function.Description,
-				"input_schema": tool.Function.Parameters,
-			}
+	parts := splitSystemPrompt(systemPrompt, AnthropicSystemPromptMaxParts)
+	for i, part := range parts {
+		systemMessage := map[string]any{
+			"type": "text",
+			"text": part,
 		}
-		requestBody["tools"] = anthropicTools
-
-		// Add tool usage instructions to system prompt
-		if len(tools) > 1 {
-			toolUsagePrompt := "When multiple tools are needed to answer a question, you should identify all required tools upfront and use them all at once in your response, rather than using them sequentially. Do not wait for tool results before calling other tools."
-			if systemPrompt != "" {
-				systemPrompt = toolUsagePrompt + "\n\n" + systemPrompt
-			} else {
-				systemPrompt = toolUsagePrompt
-			}
+		if i > 0 {
+			systemMessage["cache_control"] = map[string]string{"type": "ephemeral"}
 		}
-
-		// Only set tool_choice when tools are provided
-		if toolChoice, ok := options["tool_choice"].(string); ok {
-			requestBody["tool_choice"] = map[string]interface{}{
-				"type": toolChoice,
-			}
-		} else {
-			// Default to auto for tool choice when tools are provided
-			requestBody["tool_choice"] = map[string]interface{}{
-				"type": "auto",
-			}
+		if systemArray, ok := requestBody["system"].([]map[string]any); ok {
+			requestBody["system"] = append(systemArray, systemMessage)
 		}
 	}
+}
 
-	// Add system prompt if we have one
-	if systemPrompt != "" {
-		parts := splitSystemPrompt(systemPrompt, 3)
-		for i, part := range parts {
-			systemMessage := map[string]interface{}{
-				"type": "text",
-				"text": part,
-			}
-			if i > 0 {
-				systemMessage["cache_control"] = map[string]string{"type": "ephemeral"}
-			}
-			requestBody["system"] = append(requestBody["system"].([]map[string]interface{}), systemMessage)
-		}
+// addStructuredResponseToRequest adds structured response schema to the request
+func (p *AnthropicProvider) addStructuredResponseToRequest(requestBody map[string]any, schema any) error {
+	schemaJSON, err := json.MarshalIndent(schema, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal schema: %w", err)
 	}
 
-	// Handle user message with potential caching
-	userMessage := map[string]interface{}{
-		"role": "user",
-		"content": []map[string]interface{}{
+	// For Anthropic, we add the schema to the system prompt
+	systemInstruction := fmt.Sprintf(
+		"You must respond with a JSON object that strictly adheres to this schema:\n%s\nDo not include any explanatory text, only output valid JSON.",
+		string(schemaJSON),
+	)
+
+	// Append to existing system prompt if present
+	if existing, ok := requestBody["system"].([]map[string]any); ok && len(existing) > 0 {
+		existing = append(existing, map[string]any{
+			"type": "text",
+			"text": systemInstruction,
+		})
+		requestBody["system"] = existing
+	} else {
+		requestBody["system"] = []map[string]any{
 			{
 				"type": "text",
-				"text": prompt,
+				"text": systemInstruction,
 			},
+		}
+	}
+
+	return nil
+}
+
+// addMessagesToRequestBody converts and adds messages to the request
+func (p *AnthropicProvider) addMessagesToRequestBody(
+	requestBody map[string]any,
+	messages []Message,
+	options map[string]any,
+) {
+	anthropicMessages := make([]map[string]any, 0, len(messages))
+
+	for i := range messages {
+		anthropicMsg := p.convertMessageToAnthropicFormat(&messages[i], options)
+		anthropicMessages = append(anthropicMessages, anthropicMsg)
+	}
+
+	requestBody["messages"] = anthropicMessages
+}
+
+// convertMessageToAnthropicFormat converts a Message to Anthropic's format
+func (p *AnthropicProvider) convertMessageToAnthropicFormat(msg *Message, options map[string]any) map[string]any {
+	// Create content array
+	content := []map[string]any{
+		{
+			"type": "text",
+			"text": msg.Content,
 		},
 	}
 
-	// Add cache_control only if caching is enabled
-	if caching, ok := options["enable_caching"].(bool); ok && caching {
-		userMessage["content"].([]map[string]interface{})[0]["cache_control"] = map[string]string{"type": "ephemeral"}
+	// Add cache control if specified
+	if msg.CacheType != "" || p.shouldEnableCaching(options) {
+		cacheType := string(msg.CacheType)
+		if cacheType == "" {
+			cacheType = "ephemeral"
+		}
+		content[0]["cache_control"] = map[string]string{"type": cacheType}
 	}
 
-	requestBody["messages"] = append(requestBody["messages"].([]map[string]interface{}), userMessage)
-
-	// Add other options
-	for k, v := range options {
-		if k != "system_prompt" && k != "max_tokens" && k != "tools" && k != "tool_choice" && k != "enable_caching" {
-			requestBody[k] = v
+	// Handle tool calls if present
+	if len(msg.ToolCalls) > 0 {
+		for _, toolCall := range msg.ToolCalls {
+			content = append(content, map[string]any{
+				"type":  "tool_use",
+				"id":    toolCall.ID,
+				"name":  toolCall.Function.Name,
+				"input": toolCall.Function.Arguments,
+			})
 		}
 	}
 
-	return json.Marshal(requestBody)
+	anthropicMsg := map[string]any{
+		"role":    msg.Role,
+		"content": content,
+	}
+
+	// Add name if present
+	if msg.Name != "" {
+		anthropicMsg["name"] = msg.Name
+	}
+
+	return anthropicMsg
+}
+
+// shouldEnableCaching checks if caching should be enabled
+func (p *AnthropicProvider) shouldEnableCaching(options map[string]any) bool {
+	if caching, ok := options["enable_caching"].(bool); ok {
+		return caching
+	}
+	return false
+}
+
+// addRemainingOptions adds non-handled options to the request
+func (p *AnthropicProvider) addRemainingOptions(requestBody map[string]any, options map[string]any) {
+	for k, v := range options {
+		if p.isGlobalOption(k) {
+			continue
+		}
+		requestBody[k] = v
+	}
+}
+
+// isGlobalOption checks if an option is already handled
+func (p *AnthropicProvider) isGlobalOption(key string) bool {
+	return key == anthropicKeySystemPrompt ||
+		key == anthropicKeyMaxTokens ||
+		key == anthropicKeyTools ||
+		key == anthropicKeyToolChoice ||
+		key == anthropicKeyEnableCaching
+}
+
+// processTools handles tool configuration and updates system prompt
+func (p *AnthropicProvider) processTools(
+	tools []models.Tool,
+	requestBody map[string]any,
+	systemPrompt string,
+	options map[string]any,
+) string {
+	anthropicTools := make([]map[string]any, len(tools))
+	for i, tool := range tools {
+		anthropicTools[i] = map[string]any{
+			"name":         tool.Function.Name,
+			"description":  tool.Function.Description,
+			"input_schema": tool.Function.Parameters,
+		}
+	}
+	requestBody[anthropicKeyTools] = anthropicTools
+
+	// Add tool usage instructions to system prompt for multiple tools
+	if len(tools) > 1 {
+		toolUsagePrompt := "When multiple tools are needed to answer a question, you should identify all required tools upfront and use them all at once in your response, rather than using them sequentially. Do not wait for tool results before calling other tools."
+		if systemPrompt != "" {
+			systemPrompt = toolUsagePrompt + "\n\n" + systemPrompt
+		} else {
+			systemPrompt = toolUsagePrompt
+		}
+	}
+
+	// Set tool choice
+	if toolChoice, ok := options["tool_choice"].(string); ok {
+		requestBody["tool_choice"] = map[string]any{
+			"type": toolChoice,
+		}
+	} else {
+		// Default to auto for tool choice when tools are provided
+		requestBody["tool_choice"] = map[string]any{
+			"type": "auto",
+		}
+	}
+
+	return systemPrompt
 }
 
 // Helper function to split the system prompt into a maximum of n parts
@@ -241,7 +629,7 @@ func splitSystemPrompt(prompt string, n int) []string {
 	extraParagraphs := len(paragraphs) % n
 
 	currentIndex := 0
-	for i := 0; i < n; i++ {
+	for i := range n {
 		end := currentIndex + paragraphsPerPart
 		if i < extraParagraphs {
 			end++
@@ -253,126 +641,30 @@ func splitSystemPrompt(prompt string, n int) []string {
 	return result
 }
 
-// PrepareRequestWithSchema creates a request that includes structured output formatting.
-// This uses Anthropic's system prompts to enforce response structure.
-//
-// Parameters:
-//   - prompt: The input text or conversation
-//   - options: Additional request parameters
-//   - schema: JSON schema for response validation
-//
-// Returns:
-//   - Serialized JSON request body
-//   - Any error encountered during preparation
-func (p *AnthropicProvider) PrepareRequestWithSchema(prompt string, options map[string]interface{}, schema interface{}) ([]byte, error) {
-	schemaJSON, err := json.MarshalIndent(schema, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal schema: %w", err)
-	}
-
-	// Create a system message that enforces the JSON schema
-	systemMsg := fmt.Sprintf("You must respond with a JSON object that strictly adheres to this schema:\n%s\nDo not include any explanatory text, only output valid JSON.", string(schemaJSON))
-
-	requestBody := map[string]interface{}{
-		"model":  p.model,
-		"system": systemMsg,
-		"messages": []map[string]string{
-			{"role": "user", "content": prompt},
-		},
-	}
-
-	// Add any additional options
-	for k, v := range options {
-		if k != "system_prompt" { // Skip system_prompt as we're using it for schema
-			requestBody[k] = v
-		}
-	}
-
-	return json.Marshal(requestBody)
-}
-
-// ParseResponse extracts the generated text from the Anthropic API response.
-// It handles various response formats and error cases.
-//
-// Parameters:
-//   - body: Raw API response body
-//
-// Returns:
-//   - Generated text content
-//   - Any error encountered during parsing
-func (p *AnthropicProvider) ParseResponse(body []byte) (string, error) {
-	p.logger.Debug("Raw API response: %s", string(body))
-
-	var response struct {
-		ID      string `json:"id"`
-		Type    string `json:"type"`
-		Role    string `json:"role"`
-		Model   string `json:"model"`
-		Content []struct {
-			Type  string          `json:"type"`
-			Text  string          `json:"text,omitempty"`
-			ID    string          `json:"id,omitempty"`
-			Name  string          `json:"name,omitempty"`
-			Input json.RawMessage `json:"input,omitempty"`
-		} `json:"content"`
-		StopReason string  `json:"stop_reason"`
-		StopSeq    *string `json:"stop_sequence"`
-		Usage      struct {
-			InputTokens              int `json:"input_tokens"`
-			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-			OutputTokens             int `json:"output_tokens"`
-		} `json:"usage"`
-	}
-	if err := json.Unmarshal(body, &response); err != nil {
-		return "", fmt.Errorf("error parsing response: %w", err)
-	}
-	if len(response.Content) == 0 {
-		return "", fmt.Errorf("empty response from LLM")
-	}
-
-	p.logger.Debug("Number of content blocks: %d", len(response.Content))
-	p.logger.Debug("Stop reason: %s", response.StopReason)
-
+// processAnthropicContent processes the content blocks from Anthropic response
+func (p *AnthropicProvider) processAnthropicContent(contents []anthropicContent) (string, error) {
 	var finalResponse strings.Builder
 	var functionCalls []string
 	var pendingText strings.Builder
 	var lastType string
 
 	// First pass: collect all function calls and text
-	for i, content := range response.Content {
+	for i, content := range contents {
 		p.logger.Debug("Processing content block %d: type=%s", i, content.Type)
 
 		switch content.Type {
 		case "text":
-			// If we have pending text and this is also text, add a space
-			if lastType == "text" && pendingText.Len() > 0 {
-				pendingText.WriteString(" ")
-			}
-			pendingText.WriteString(content.Text)
+			p.processTextContent(&pendingText, content.Text, lastType)
 			p.logger.Debug("Added text content: %s", content.Text)
 
 		case "tool_use", "tool_calls":
-			// If we have any pending text, add it to the final response
-			if pendingText.Len() > 0 {
-				if finalResponse.Len() > 0 {
-					finalResponse.WriteString("\n")
-				}
-				finalResponse.WriteString(pendingText.String())
-				pendingText.Reset()
-			}
+			// Transfer pending text to final response
+			p.transferPendingText(&finalResponse, &pendingText)
 
-			// Parse input as raw JSON to preserve the exact format
-			var args interface{}
-			if err := json.Unmarshal(content.Input, &args); err != nil {
-				p.logger.Debug("Error parsing tool input: %v, raw input: %s", err, string(content.Input))
-				return "", fmt.Errorf("error parsing tool input: %w", err)
-			}
-
-			functionCall, err := utils.FormatFunctionCall(content.Name, args)
+			// Process function call
+			functionCall, err := p.processFunctionCall(&content)
 			if err != nil {
-				p.logger.Debug("Error formatting function call: %v", err)
-				return "", fmt.Errorf("error formatting function call: %w", err)
+				return "", err
 			}
 			functionCalls = append(functionCalls, functionCall)
 			p.logger.Debug("Added function call: %s", functionCall)
@@ -381,12 +673,7 @@ func (p *AnthropicProvider) ParseResponse(body []byte) (string, error) {
 	}
 
 	// Add any remaining pending text
-	if pendingText.Len() > 0 {
-		if finalResponse.Len() > 0 {
-			finalResponse.WriteString("\n")
-		}
-		finalResponse.WriteString(pendingText.String())
-	}
+	p.transferPendingText(&finalResponse, &pendingText)
 
 	p.logger.Debug("Number of function calls collected: %d", len(functionCalls))
 	for i, call := range functionCalls {
@@ -401,234 +688,101 @@ func (p *AnthropicProvider) ParseResponse(body []byte) (string, error) {
 		finalResponse.WriteString(strings.Join(functionCalls, "\n"))
 	}
 
-	result := finalResponse.String()
-	p.logger.Debug("Final response: %s", result)
-	return result, nil
+	return finalResponse.String(), nil
 }
 
-// HandleFunctionCalls processes structured output in the response.
-// This supports Anthropic's response formatting capabilities.
-func (p *AnthropicProvider) HandleFunctionCalls(body []byte) ([]byte, error) {
-	p.logger.Debug("Handling function calls from response")
-	response := string(body)
+// processTextContent handles text content blocks
+func (p *AnthropicProvider) processTextContent(pendingText *strings.Builder, text string, lastType string) {
+	// If we have pending text and this is also text, add a space
+	if lastType == "text" && pendingText.Len() > 0 {
+		pendingText.WriteString(" ")
+	}
+	pendingText.WriteString(text)
+}
 
-	functionCalls, err := utils.ExtractFunctionCalls(response)
+// transferPendingText transfers pending text to final response
+func (p *AnthropicProvider) transferPendingText(finalResponse, pendingText *strings.Builder) {
+	if pendingText.Len() > 0 {
+		if finalResponse.Len() > 0 {
+			finalResponse.WriteString("\n")
+		}
+		finalResponse.WriteString(pendingText.String())
+		pendingText.Reset()
+	}
+}
+
+// processFunctionCall processes a function call content block
+func (p *AnthropicProvider) processFunctionCall(content *anthropicContent) (string, error) {
+	// Parse input as raw JSON to preserve the exact format
+	var args any
+	if err := json.Unmarshal(content.Input, &args); err != nil {
+		p.logger.Debug("Error parsing tool input: %v, raw input: %s", err, string(content.Input))
+		return "", fmt.Errorf("error parsing tool input: %w", err)
+	}
+
+	functionCall, err := FormatFunctionCall(content.Name, args)
 	if err != nil {
-		return nil, fmt.Errorf("error extracting function calls: %w", err)
+		p.logger.Debug("Error formatting function call: %v", err)
+		return "", fmt.Errorf("error formatting function call: %w", err)
 	}
 
-	if len(functionCalls) == 0 {
-		p.logger.Debug("No function calls found in the response")
-		return nil, nil
-	}
-
-	p.logger.Debug("Function calls to handle: %v", functionCalls)
-	return json.Marshal(functionCalls)
+	return functionCall, nil
 }
 
-// SetExtraHeaders configures additional HTTP headers for API requests.
-// This allows for custom headers needed for specific features or requirements.
-func (p *AnthropicProvider) SetExtraHeaders(extraHeaders map[string]string) {
-	p.extraHeaders = extraHeaders
+// anthropicResponse represents the structure of a response from the Anthropic API.
+// nolint: tagliatelle // These types are specific to the Anthropic API response structure
+type anthropicResponse struct {
+	StopSeq    *string            `json:"stop_sequence"`
+	ID         string             `json:"id"`
+	Type       string             `json:"type"`
+	Role       string             `json:"role"`
+	Model      string             `json:"model"`
+	StopReason string             `json:"stop_reason"`
+	Content    []anthropicContent `json:"content"`
+	Usage      anthropicUsage     `json:"usage"`
 }
 
-// SupportsStreaming indicates whether streaming is supported
-func (p *AnthropicProvider) SupportsStreaming() bool {
-	return true
+// anthropicContent represents a single content block in an Anthropic response.
+type anthropicContent struct {
+	Type  string          `json:"type"`
+	Text  string          `json:"text,omitempty"`
+	ID    string          `json:"id,omitempty"`
+	Name  string          `json:"name,omitempty"`
+	Input json.RawMessage `json:"input,omitempty"`
 }
 
-// PrepareStreamRequest creates a request body for streaming API calls
-func (p *AnthropicProvider) PrepareStreamRequest(prompt string, options map[string]interface{}) ([]byte, error) {
-	requestBody := map[string]interface{}{
-		"model":  p.model,
-		"stream": true,
-		"messages": []map[string]interface{}{
-			{
-				"role":    "user",
-				"content": prompt,
-			},
-		},
-		"max_tokens": 1024, // Default max tokens
-	}
-
-	// Add system prompt if present
-	if systemPrompt, ok := options["system_prompt"].(string); ok && systemPrompt != "" {
-		requestBody["system"] = systemPrompt
-		delete(options, "system_prompt")
-	}
-
-	// Add max tokens if present
-	if maxTokens, ok := options["max_tokens"].(int); ok {
-		requestBody["max_tokens"] = maxTokens
-		delete(options, "max_tokens")
-	}
-
-	// Add temperature if present
-	if temperature, ok := options["temperature"].(float64); ok {
-		requestBody["temperature"] = temperature
-		delete(options, "temperature")
-	}
-
-	// Add other options
-	for k, v := range options {
-		if k != "stream" { // Don't override stream setting
-			requestBody[k] = v
-		}
-	}
-
-	return json.Marshal(requestBody)
+type anthropicEvent struct {
+	Index   *int              `json:"index,omitempty"`
+	Delta   *anthropicDelta   `json:"delta,omitempty"`
+	Usage   *anthropicUsage   `json:"usage,omitempty"`
+	Message *anthropicMessage `json:"message,omitempty"`
+	Type    string            `json:"type"`
 }
 
-// ParseStreamResponse processes a single chunk from a streaming response
-func (p *AnthropicProvider) ParseStreamResponse(chunk []byte) (string, error) {
-	// Skip empty lines
-	if len(bytes.TrimSpace(chunk)) == 0 {
-		return "", fmt.Errorf("empty chunk")
-	}
-
-	// Check for [DONE] marker
-	if bytes.Equal(bytes.TrimSpace(chunk), []byte("[DONE]")) {
-		return "", io.EOF
-	}
-
-	// Parse the event
-	var event struct {
-		Type  string `json:"type"`
-		Index int    `json:"index"`
-		Delta struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"delta"`
-	}
-
-	if err := json.Unmarshal(chunk, &event); err != nil {
-		return "", fmt.Errorf("malformed event: %w", err)
-	}
-
-	// Handle different event types
-	switch event.Type {
-	case "content_block_delta":
-		if event.Delta.Type == "text_delta" {
-			if event.Delta.Text == "" {
-				return "", fmt.Errorf("skip token")
-			}
-			return event.Delta.Text, nil
-		}
-		return "", fmt.Errorf("skip token")
-	case "message_stop":
-		return "", io.EOF
-	default:
-		return "", fmt.Errorf("skip token")
-	}
+type anthropicMessage struct {
+	StopReason   *string         `json:"stop_reason"`
+	StopSequence *string         `json:"stop_sequence"`
+	Usage        *anthropicUsage `json:"usage,omitempty"`
+	ID           string          `json:"id"`
+	Type         string          `json:"type"`
+	Role         string          `json:"role"`
+	Model        string          `json:"model"`
+	Content      []any           `json:"content"`
 }
 
-// PrepareRequestWithMessages creates a request body using structured message objects
-// rather than a flattened prompt string. This enables more efficient caching and
-// better preserves conversation structure for the Claude API.
-//
-// Parameters:
-//   - messages: Slice of MemoryMessage objects representing the conversation
-//   - options: Additional options for the request
-//
-// Returns:
-//   - Serialized JSON request body
-//   - Any error encountered during preparation
-func (p *AnthropicProvider) PrepareRequestWithMessages(messages []types.MemoryMessage, options map[string]interface{}) ([]byte, error) {
-	requestBody := map[string]interface{}{
-		"model":      p.model,
-		"max_tokens": p.options["max_tokens"],
-		"system":     []map[string]interface{}{},
-		"messages":   []map[string]interface{}{},
-	}
+type anthropicDelta struct {
+	StopReason   *string `json:"stop_reason,omitempty"`
+	StopSequence *string `json:"stop_sequence,omitempty"`
+	Type         string  `json:"type,omitempty"`
+	Text         string  `json:"text,omitempty"`
+	PartialJSON  string  `json:"partial_json,omitempty"`
+	Thinking     string  `json:"thinking,omitempty"`
+	Signature    string  `json:"signature,omitempty"`
+}
 
-	// Extract system prompt if present in options
-	systemPrompt := ""
-	if sp, ok := options["system_prompt"].(string); ok && sp != "" {
-		systemPrompt = sp
-	}
-
-	// Handle system prompt
-	if systemPrompt != "" {
-		parts := splitSystemPrompt(systemPrompt, 3)
-		for i, part := range parts {
-			systemMessage := map[string]interface{}{
-				"type": "text",
-				"text": part,
-			}
-			if i > 0 {
-				systemMessage["cache_control"] = map[string]string{"type": "ephemeral"}
-			}
-			requestBody["system"] = append(requestBody["system"].([]map[string]interface{}), systemMessage)
-		}
-	}
-
-	// Process tools if present
-	if tools, ok := options["tools"].([]utils.Tool); ok && len(tools) > 0 {
-		anthropicTools := make([]map[string]interface{}, len(tools))
-		for i, tool := range tools {
-			anthropicTools[i] = map[string]interface{}{
-				"name":         tool.Function.Name,
-				"description":  tool.Function.Description,
-				"input_schema": tool.Function.Parameters,
-			}
-		}
-		requestBody["tools"] = anthropicTools
-
-		// Add tool usage instructions to system prompt if needed
-		if len(tools) > 1 {
-			toolUsagePrompt := "When multiple tools are needed to answer a question, you should identify all required tools upfront and use them all at once in your response, rather than using them sequentially. Do not wait for tool results before calling other tools."
-			// This is separate from the existing system messages
-			systemMessage := map[string]interface{}{
-				"type": "text",
-				"text": toolUsagePrompt,
-			}
-			requestBody["system"] = append(requestBody["system"].([]map[string]interface{}), systemMessage)
-		}
-
-		// Only set tool_choice when tools are provided
-		if toolChoice, ok := options["tool_choice"].(string); ok {
-			requestBody["tool_choice"] = map[string]interface{}{
-				"type": toolChoice,
-			}
-		} else {
-			// Default to auto for tool choice when tools are provided
-			requestBody["tool_choice"] = map[string]interface{}{
-				"type": "auto",
-			}
-		}
-	}
-
-	// Convert MemoryMessage objects to Anthropic messages
-	for _, msg := range messages {
-		content := []map[string]interface{}{
-			{
-				"type": "text",
-				"text": msg.Content,
-			},
-		}
-
-		// Add cache_control if specified
-		if msg.CacheControl != "" {
-			content[0]["cache_control"] = map[string]string{"type": msg.CacheControl}
-		} else if caching, ok := options["enable_caching"].(bool); ok && caching {
-			// Add default caching if enabled globally
-			content[0]["cache_control"] = map[string]string{"type": "ephemeral"}
-		}
-
-		message := map[string]interface{}{
-			"role":    msg.Role,
-			"content": content,
-		}
-
-		requestBody["messages"] = append(requestBody["messages"].([]map[string]interface{}), message)
-	}
-
-	// Add other options
-	for k, v := range options {
-		if k != "system_prompt" && k != "max_tokens" && k != "tools" && k != "tool_choice" && k != "enable_caching" && k != "structured_messages" {
-			requestBody[k] = v
-		}
-	}
-
-	return json.Marshal(requestBody)
+type anthropicUsage struct {
+	InputTokens              int64 `json:"input_tokens,omitempty"`
+	OutputTokens             int64 `json:"output_tokens,omitempty"`
+	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens,omitempty"`
 }

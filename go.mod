@@ -1,6 +1,6 @@
-module github.com/teilomillet/gollm
+module github.com/weave-labs/gollm
 
-go 1.23.0
+go 1.24
 
 toolchain go1.24.1
 
@@ -8,7 +8,9 @@ require (
 	github.com/caarlos0/env/v11 v11.3.1
 	github.com/go-playground/validator/v10 v10.25.0
 	github.com/invopop/jsonschema v0.13.0
+	github.com/modelcontextprotocol/go-sdk v0.2.0
 	github.com/pkoukk/tiktoken-go v0.1.7
+	github.com/puzpuzpuz/xsync/v4 v4.1.0
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/time v0.11.0
 )
@@ -25,7 +27,6 @@ require (
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mailru/easyjson v0.9.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	golang.org/x/crypto v0.36.0 // indirect
 	golang.org/x/net v0.38.0 // indirect

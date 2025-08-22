@@ -2,83 +2,142 @@ package providers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
-	"github.com/teilomillet/gollm/config"
-	"github.com/teilomillet/gollm/types"
-	"github.com/teilomillet/gollm/utils"
+	"github.com/weave-labs/gollm/config"
+	"github.com/weave-labs/gollm/internal/logging"
+)
+
+const (
+	cohereKeyText           = "text"
+	cohereKeySystemPrompt   = "system_prompt"
+	cohereKeyPreamble       = "preamble"
+	cohereKeyMessages       = "messages"
+	cohereKeyResponseFormat = "response_format"
+	cohereKeyStream         = "stream"
 )
 
 // CohereProvider implements the Provider interface for Cohere's API.
 // It supports Cohere's language models and provides access to their capabilities,
 // including chat completion and structured output
 type CohereProvider struct {
-	apiKey       string            // API key for authentication
-	model        string            // Model identifier (e.g., "command-r-plus-08-2024", "command-r-plus-04-2024")
-	extraHeaders map[string]string // Additional HTTP headers
-	options      map[string]any    // Model-specific options
-	logger       utils.Logger      // Logger instance
+	logger       logging.Logger
+	extraHeaders map[string]string
+	options      map[string]any
+	apiKey       string
+	model        string
 }
 
 // NewCohereProvider creates a new Cohere provider instance.
 // It initializes the provider with the given API key, model, and optional headers.
-//
-// Parameters:
-//   - apiKey: Cohere API key for authentication
-//   - model: The model to use (e.g., "command-r-plus-08-2024", "command-r-plus-04-2024")
-//   - extraHeaders: Additional HTTP headers for requests
-//
-// Returns:
-//   - A configured Cohere Provider instance
-func NewCohereProvider(apiKey, model string, extraHeaders map[string]string) Provider {
+func NewCohereProvider(apiKey, model string, extraHeaders map[string]string) *CohereProvider {
 	if extraHeaders == nil {
 		extraHeaders = make(map[string]string)
 	}
 
-	return &CohereProvider{
+	p := &CohereProvider{
 		apiKey:       apiKey,
 		model:        model,
 		extraHeaders: extraHeaders,
 		options:      make(map[string]any),
-		logger:       utils.NewLogger(utils.LogLevelInfo),
+		logger:       logging.NewLogger(logging.LogLevelInfo),
 	}
-}
 
-// SetLogger configures the logger for the Cohere provider.
-// This is used for debugging and monitoring API interactions.
-func (p *CohereProvider) SetLogger(logger utils.Logger) {
-	p.logger = logger
-}
-
-// SetOption sets a specific option for the Cohere provider.
-// Support options include:
-//   - temperature: Controls randomness
-//   - max_tokens: Maximum tokens in the response
-//   - p: Total probability mass (0.01 to 0.99)
-//   - k: Top k most likely tokens are considered
-//   - strict_tools: If set to true, follow tool definition strictly
-func (p *CohereProvider) SetOption(key string, value any) {
-	p.options[key] = value
-	if p.logger != nil {
-		p.logger.Debug("Setting option for Cohere", "key", key, "value", value)
-	}
-}
-
-// SetDefaultOptions configures standard options from the global configuration.
-// This includes temperature, max tokens, and sampling parameters.
-func (p *CohereProvider) SetDefaultOptions(config *config.Config) {
-	p.SetOption("temperature", config.Temperature)
-	p.SetOption("max_tokens", config.MaxTokens)
-	p.SetOption("stream", false)
-	if config.Seed != nil {
-		p.SetOption("seed", *config.Seed)
-	}
+	// Register capabilities based on model
+	p.registerCapabilities()
+	return p
 }
 
 // Name returns "cohere" as the provider identifier.
 func (p *CohereProvider) Name() string {
 	return "cohere"
+}
+
+// registerCapabilities registers capabilities for all known Cohere models
+func (p *CohereProvider) registerCapabilities() {
+	registry := GetRegistry()
+
+	// Define all known Cohere models
+	allModels := []string{
+		// Command A models
+		"command-a-03-2025",
+
+		// Command R Plus models
+		"command-r-plus-08-2024",
+		"command-r-plus-04-2024",
+		"command-r-plus",
+
+		// Command R models
+		"command-r-08-2024",
+		"command-r-03-2024",
+		"command-r",
+
+		// Legacy Command models
+		"command",
+		"command-light",
+		"command-nightly",
+		"command-light-nightly",
+	}
+
+	for _, model := range allModels {
+		// Structured response support for newer models
+		structuredResponseModels := []string{
+			"command-a-03-2025",
+			"command-r-plus-08-2024",
+			"command-r-plus-04-2024",
+			"command-r-plus",
+			"command-r-08-2024",
+			"command-r-03-2024",
+			"command-r",
+		}
+
+		if slices.Contains(structuredResponseModels, model) {
+			// IMPORTANT: Cohere quirk - structured response only via tool calling
+			registry.Register(ProviderCohere, model, CapStructuredResponse, StructuredResponseConfig{
+				RequiresToolUse:  true, // THE COHERE QUIRK!
+				MaxSchemaDepth:   5,
+				SupportedFormats: []string{"json"},
+				SystemPromptHint: "You must use the provided tool to structure your response",
+			})
+		}
+
+		// Function calling support
+		if strings.Contains(model, "command-r") {
+			registry.Register(ProviderCohere, model, CapFunctionCalling, FunctionCallingConfig{
+				MaxFunctions:      50,
+				SupportsParallel:  false,
+				RequiresToolRole:  true,
+				SupportsStreaming: true,
+			})
+		} else if strings.Contains(model, "command") {
+			registry.Register(ProviderCohere, model, CapFunctionCalling, FunctionCallingConfig{
+				MaxFunctions:      20,
+				SupportsParallel:  false,
+				RequiresToolRole:  true,
+				SupportsStreaming: false,
+			})
+		}
+
+		// All Cohere models support streaming
+		registry.Register(ProviderCohere, model, CapStreaming, StreamingConfig{
+			SupportsSSE:    true,
+			BufferSize:     8192,
+			ChunkDelimiter: "\n",
+			SupportsUsage:  false,
+		})
+	}
+}
+
+// HasCapability checks if a capability is supported
+func (p *CohereProvider) HasCapability(capability Capability, model string) bool {
+	targetModel := p.model
+	if model != "" {
+		targetModel = model
+	}
+	return GetRegistry().HasCapability(ProviderCohere, targetModel, capability)
 }
 
 // Endpoint returns the base URL for the Cohere API.
@@ -87,13 +146,7 @@ func (p *CohereProvider) Endpoint() string {
 	return "https://api.cohere.com/v2/chat"
 }
 
-// SupportsJSONSchema indicates that Cohere supports structured output
-// through its system prompts and response formatting capabilities.
-func (p *CohereProvider) SupportsJSONSchema() bool {
-	return true
-}
-
-// Headers returns the required HTTP headers for Cohere API requests.
+// Headers return the required HTTP headers for Cohere API requests.
 // This includes:
 //   - Content-type: application/json
 //   - Authorization: Bearer token using the API key
@@ -110,87 +163,80 @@ func (p *CohereProvider) Headers() map[string]string {
 	return headers
 }
 
-// PrepareRequest creates the request body for a Cohere API call.
-// It handles:
-//   - Message formatting
-//   - System prompts
-//   - Response formatting
-//   - Model-specific options
-//
-// Parameters:
-//   - prompt: The input text or conversation
-//   - options: Additional parameters for the request
-//
-// Returns:
-//   - Serialized JSON request body
-//   - Any error encountered during preparation
-func (p *CohereProvider) PrepareRequest(prompt string, options map[string]any) ([]byte, error) {
-	requestBody := map[string]any{
-		"model": p.model,
-		"messages": []map[string]any{
-			{"role": "user", "content": prompt},
-		},
-	}
-
-	// First, add default options
-	for k, v := range p.options {
-		requestBody[k] = v
-	}
-
-	// Then, add any additional options (which may override defaults)
-	for k, v := range options {
-		requestBody[k] = v
-	}
-
-	return json.Marshal(requestBody)
+// SetExtraHeaders configures additional HTTP headers for API requests.
+// This allows for custom headers needed for specific features or requirements.
+func (p *CohereProvider) SetExtraHeaders(extraHeaders map[string]string) {
+	p.extraHeaders = extraHeaders
+	p.logger.Debug("Extra headers set", "headers", extraHeaders)
 }
 
-// PrepareRequestWithSchema creates a request that includes structured output formatting.
-// This uses Cohere's system prompts to enforce response structure.
-//
-// Parameters:
-//   - prompt: The input text or conversation
-//   - options: Additional request parameters
-//   - schema: JSON schema for response validation
-//
-// Returns:
-//   - Serialized JSON request body
-//   - Any error encountered during preparation
-func (p *CohereProvider) PrepareRequestWithSchema(prompt string, options map[string]any, schema any) ([]byte, error) {
-	requestBody := map[string]any{
-		"model": p.model,
-		"messages": []map[string]any{
-			{"role": "user", "content": prompt},
-		},
-		"response_format": map[string]any{
-			"type":        "json_object",
-			"json_schema": schema,
-		},
+// SetDefaultOptions configures standard options from the global configuration.
+// This includes temperature, max tokens, and sampling parameters.
+func (p *CohereProvider) SetDefaultOptions(cfg *config.Config) {
+	p.SetOption("temperature", cfg.Temperature)
+	p.SetOption("max_tokens", cfg.MaxTokens)
+	p.SetOption(cohereKeyStream, false)
+	if cfg.Seed != nil {
+		p.SetOption("seed", *cfg.Seed)
+	}
+}
+
+// SetOption sets a specific option for the Cohere provider.
+// Support options include:
+//   - temperature: Controls randomness
+//   - max_tokens: Maximum tokens in the response
+//   - p: Total probability mass (0.01 to 0.99)
+//   - k: Top k most likely tokens are considered
+//   - strict_tools: If set to true, follow tool definition strictly
+func (p *CohereProvider) SetOption(key string, value any) {
+	p.options[key] = value
+	if p.logger != nil {
+		p.logger.Debug("Setting option for Cohere", "key", key, "value", value)
+	}
+}
+
+// SetLogger configures the logger for the Cohere provider.
+// This is used for debugging and monitoring API interactions.
+func (p *CohereProvider) SetLogger(logger logging.Logger) {
+	p.logger = logger
+}
+
+// PrepareRequest creates the request body for a Cohere API call
+func (p *CohereProvider) PrepareRequest(req *Request, options map[string]any) ([]byte, error) {
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
 	}
 
-	// First, add the default options
-	for k, v := range p.options {
-		requestBody[k] = v
+	requestBody := p.initializeRequestBodyWithModel(model)
+
+	p.addMessagesToRequestBody(requestBody, req.Messages)
+
+	if req.SystemPrompt != "" {
+		requestBody[cohereKeyPreamble] = req.SystemPrompt
+	} else if systemPrompt, ok := options[cohereKeySystemPrompt].(string); ok && systemPrompt != "" {
+		requestBody[cohereKeyPreamble] = systemPrompt
 	}
 
-	// Then, add any additional options (which may override defaults)
-	for k, v := range options {
-		requestBody[k] = v
+	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
+		p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 	}
 
-	return json.Marshal(requestBody)
+	p.addRemainingOptions(requestBody, options)
+
+	data, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+	return data, nil
 }
 
 // ParseResponse extracts the generated text from the Cohere API response.
 // It handles various response formats and error cases
-//
-// Parameters:
-//   - body: Raw API response body
-//
-// Returns:
-//   - Generated text content
-//   - Any error encountered during parsing
-func (p *CohereProvider) ParseResponse(body []byte) (string, error) {
+func (p *CohereProvider) ParseResponse(body []byte) (*Response, error) {
 	var response struct {
 		Message struct {
 			Role    string `json:"role"`
@@ -210,33 +256,31 @@ func (p *CohereProvider) ParseResponse(body []byte) (string, error) {
 	}
 
 	if err := json.Unmarshal(body, &response); err != nil {
-		return "", fmt.Errorf("error parsing response: %w", err)
+		return nil, fmt.Errorf("error parsing response: %w", err)
 	}
 
 	if len(response.Message.Content) == 0 {
-		return "", fmt.Errorf("empty response from API")
+		return nil, errors.New("empty response from API")
 	}
 
 	var finalResponse strings.Builder
 
 	for _, content := range response.Message.Content {
-		switch content.Type {
-		case "text":
+		if content.Type == cohereKeyText {
 			finalResponse.WriteString(content.Text)
 			p.logger.Debug("Text content: %s", content.Text)
 		}
 	}
 
 	for _, toolCall := range response.Message.ToolCalls {
-		// Parse arguments as raw JSON to preserve the exact format
-		var args interface{}
+		var args any
 		if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
-			return "", fmt.Errorf("error parsing function arguments: %w", err)
+			return nil, fmt.Errorf("error parsing function arguments: %w", err)
 		}
 
-		functionCall, err := utils.FormatFunctionCall(toolCall.Function.Name, args)
+		functionCall, err := FormatFunctionCall(toolCall.Function.Name, args)
 		if err != nil {
-			return "", fmt.Errorf("error formatting function call: %w", err)
+			return nil, fmt.Errorf("error formatting function call: %w", err)
 		}
 		if finalResponse.Len() > 0 {
 			finalResponse.WriteString("\n")
@@ -245,97 +289,139 @@ func (p *CohereProvider) ParseResponse(body []byte) (string, error) {
 	}
 
 	p.logger.Debug("Final response: %s", finalResponse.String())
-	return finalResponse.String(), nil
-}
-
-// HandleFunctionCalls processes structured output in the response.
-// This supports Cohere's response formatting capabilities.
-func (p *CohereProvider) HandleFunctionCalls(body []byte) ([]byte, error) {
-	response := string(body)
-	functionCalls, err := utils.ExtractFunctionCalls(response)
-	if err != nil {
-		return nil, fmt.Errorf("error extracting function calls: %w", err)
-	}
-
-	if len(functionCalls) == 0 {
-		return nil, nil // No function calls found
-	}
-
-	return json.Marshal(functionCalls)
-}
-
-// SetExtraHeaders configures additional HTTP headers for API requests.
-// This allows for custom headers needed for specific features or requirements.
-func (p *CohereProvider) SetExtraHeaders(extraHeaders map[string]string) {
-	p.extraHeaders = extraHeaders
-	p.logger.Debug("Extra headers set", "headers", extraHeaders)
-}
-
-// SupportsStreaming returns whether the provider supports streaming responses
-func (p *CohereProvider) SupportsStreaming() bool {
-	return true
+	return &Response{Content: Text{Value: finalResponse.String()}}, nil
 }
 
 // PrepareStreamRequest prepares a request body for streaming
-func (p *CohereProvider) PrepareStreamRequest(prompt string, options map[string]interface{}) ([]byte, error) {
-	options["stream"] = true
-	return p.PrepareRequest(prompt, options)
+func (p *CohereProvider) PrepareStreamRequest(req *Request, options map[string]any) ([]byte, error) {
+	// Determine which model to use
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	} else if m, ok := options["model"].(string); ok && m != "" {
+		model = m
+	}
+
+	requestBody := p.initializeRequestBodyWithModel(model)
+	requestBody[cohereKeyStream] = true
+
+	p.addMessagesToRequestBody(requestBody, req.Messages)
+
+	if req.SystemPrompt != "" {
+		requestBody[cohereKeyPreamble] = req.SystemPrompt
+	} else if systemPrompt, ok := options[cohereKeySystemPrompt].(string); ok && systemPrompt != "" {
+		requestBody[cohereKeyPreamble] = systemPrompt
+	}
+
+	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
+		p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
+	}
+
+	p.addRemainingOptions(requestBody, options)
+
+	data, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+	return data, nil
 }
 
 // ParseStreamResponse parses a single chunk from a streaming response
-func (p *CohereProvider) ParseStreamResponse(chunk []byte) (string, error) {
+func (p *CohereProvider) ParseStreamResponse(chunk []byte) (*Response, error) {
 	var response struct {
 		Text string `json:"text"`
 	}
 	if err := json.Unmarshal(chunk, &response); err != nil {
-		return "", err
+		return nil, fmt.Errorf("malformed response: %w", err)
 	}
-	return response.Text, nil
+	if response.Text == "" {
+		return nil, errors.New("skip resp")
+	}
+	return &Response{Content: Text{Value: response.Text}}, nil
 }
 
-// PrepareRequestWithMessages creates a request using structured message objects.
-func (p *CohereProvider) PrepareRequestWithMessages(messages []types.MemoryMessage, options map[string]interface{}) ([]byte, error) {
-	// Cohere uses a chat history format
-	chatHistory := []map[string]interface{}{}
-	var userMessage string
+// initializeRequestBodyWithModel creates the base request structure with specified model
+func (p *CohereProvider) initializeRequestBodyWithModel(model string) map[string]any {
+	return map[string]any{
+		"model":           model,
+		cohereKeyMessages: []map[string]any{},
+	}
+}
 
-	// Process messages and build chat history
-	for i, msg := range messages {
-		if i == len(messages)-1 && msg.Role == "user" {
-			// Last user message goes in the message field
-			userMessage = msg.Content
-		} else {
-			// Previous messages go into chat history
-			chatHistory = append(chatHistory, map[string]interface{}{
-				"role":    msg.Role,
-				"message": msg.Content,
-			})
+// addMessagesToRequestBody converts and adds messages to the request
+func (p *CohereProvider) addMessagesToRequestBody(
+	requestBody map[string]any,
+	messages []Message,
+) {
+	cohereMessages := make([]map[string]any, 0, len(messages))
+
+	for i := range messages {
+		cohereMsg := p.convertMessageToCohereFormat(&messages[i])
+		cohereMessages = append(cohereMessages, cohereMsg)
+	}
+
+	requestBody[cohereKeyMessages] = cohereMessages
+}
+
+// convertMessageToCohereFormat converts a Message to Cohere's format
+func (p *CohereProvider) convertMessageToCohereFormat(msg *Message) map[string]any {
+	cohereMsg := map[string]any{
+		"role":    msg.Role,
+		"content": msg.Content,
+	}
+
+	if msg.Name != "" {
+		cohereMsg["name"] = msg.Name
+	}
+
+	if len(msg.ToolCalls) > 0 {
+		toolCalls := make([]map[string]any, len(msg.ToolCalls))
+		for i, toolCall := range msg.ToolCalls {
+			toolCalls[i] = map[string]any{
+				"id":   toolCall.ID,
+				"type": toolCall.Type,
+				"function": map[string]any{
+					"name":      toolCall.Function.Name,
+					"arguments": string(toolCall.Function.Arguments),
+				},
+			}
 		}
+		cohereMsg["tool_calls"] = toolCalls
 	}
 
-	// Build request
-	request := map[string]interface{}{
-		"model":        p.model,
-		"message":      userMessage,
-		"chat_history": chatHistory,
-	}
+	return cohereMsg
+}
 
-	// Add other options
+// addStructuredResponseToRequest adds structured response schema to the request
+func (p *CohereProvider) addStructuredResponseToRequest(requestBody map[string]any, schema any) {
+	requestBody[cohereKeyResponseFormat] = map[string]any{
+		"type":        "json_object",
+		"json_schema": schema,
+	}
+}
+
+// addRemainingOptions adds non-handled options to the request
+func (p *CohereProvider) addRemainingOptions(requestBody map[string]any, options map[string]any) {
+	// First, add default options
 	for k, v := range p.options {
-		if k != "message" && k != "chat_history" {
-			request[k] = v
+		if !p.isGlobalOption(k) {
+			requestBody[k] = v
 		}
 	}
+
+	// Then, add any additional options (which may override defaults)
 	for k, v := range options {
-		if k != "message" && k != "chat_history" && k != "system_prompt" && k != "structured_messages" {
-			request[k] = v
+		if !p.isGlobalOption(k) {
+			requestBody[k] = v
 		}
 	}
+}
 
-	// Add system prompt if present
-	if systemPrompt, ok := options["system_prompt"].(string); ok && systemPrompt != "" {
-		request["preamble"] = systemPrompt
-	}
-
-	return json.Marshal(request)
+// isGlobalOption checks if an option is already handled
+func (p *CohereProvider) isGlobalOption(key string) bool {
+	return key == cohereKeySystemPrompt ||
+		key == cohereKeyPreamble ||
+		key == cohereKeyMessages ||
+		key == cohereKeyResponseFormat ||
+		key == cohereKeyStream
 }

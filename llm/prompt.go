@@ -3,10 +3,13 @@ package llm
 import (
 	"encoding/json"
 	"fmt"
+
 	"strings"
 
 	"github.com/invopop/jsonschema"
-	"github.com/teilomillet/gollm/utils"
+
+	"github.com/weave-labs/gollm/internal/models"
+	"github.com/weave-labs/gollm/providers"
 )
 
 // CacheType defines how prompts and responses should be cached in the system.
@@ -22,12 +25,43 @@ const (
 // It can be a system message, user message, or assistant message, and may include
 // tool calls and caching configuration.
 type PromptMessage struct {
-	Role       string     `json:"role"`                   // Role of the message sender (e.g., "system", "user", "assistant")
-	Content    string     `json:"content"`                // The actual message content
-	CacheType  CacheType  `json:"cache_type,omitempty"`   // Optional caching strategy for this message
-	Name       string     `json:"name,omitempty"`         // Optional name identifier for the message
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`   // Optional tool calls requested by the LLM
-	ToolCallID string     `json:"tool_call_id,omitempty"` // ID of the tool call this message responds to
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	CacheType  CacheType  `json:"cache_type,omitempty"`
+	Name       string     `json:"name,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+}
+
+func (pm *PromptMessage) ToMessage() providers.Message {
+	msg := providers.Message{
+		Role:    pm.Role,
+		Content: pm.Content,
+		Name:    pm.Name,
+	}
+	if len(pm.ToolCalls) > 0 {
+		var toolCalls []providers.ToolCall
+		for _, tc := range pm.ToolCalls {
+			toolCalls = append(toolCalls, providers.ToolCall{
+				ID:   tc.ID,
+				Type: tc.Type,
+				Function: providers.FunctionCall{
+					Name:      tc.Function.Name,
+					Arguments: tc.Function.Arguments,
+				},
+			})
+		}
+		msg.ToolCalls = toolCalls
+	}
+	return msg
+}
+
+func ToMessages(pm []PromptMessage) []providers.Message {
+	messages := make([]providers.Message, 0, len(pm))
+	for i := range pm {
+		messages = append(messages, pm[i].ToMessage())
+	}
+	return messages
 }
 
 // ToolCall represents a request from the LLM to use a specific tool.
@@ -45,17 +79,17 @@ type ToolCall struct {
 // It includes various components like system messages, user input, context,
 // and optional elements like tools and examples.
 type Prompt struct {
-	Input           string                 `json:"input" jsonschema:"required,description=The main input text for the LLM" validate:"required"`
-	Output          string                 `json:"output,omitempty" jsonschema:"description=Specification for the expected output format"`
-	Directives      []string               `json:"directives,omitempty" jsonschema:"description=List of directives to guide the LLM"`
-	Context         string                 `json:"context,omitempty" jsonschema:"description=Additional context for the LLM"`
-	MaxLength       int                    `json:"maxLength,omitempty" jsonschema:"minimum=1,description=Maximum length of the response in words" validate:"omitempty,min=1"`
-	Examples        []string               `json:"examples,omitempty" jsonschema:"description=List of examples to guide the LLM"`
-	SystemPrompt    string                 `json:"systemPrompt,omitempty" jsonschema:"description=System prompt for the LLM"`
-	SystemCacheType CacheType              `json:"systemCacheType,omitempty" jsonschema:"description=Cache type for the system prompt"`
-	Messages        []PromptMessage        `json:"messages,omitempty" jsonschema:"description=List of messages for the conversation"`
-	Tools           []utils.Tool           `json:"tools,omitempty" jsonschema:"description=Available tools for the LLM to use"`
-	ToolChoice      map[string]interface{} `json:"tool_choice,omitempty" jsonschema:"description=Configuration for tool selection behavior"`
+	ToolChoice      map[string]any  `json:"tool_choice,omitempty" jsonschema:"description=Configuration for tool selection behavior"`
+	Input           string          `json:"input" jsonschema:"required,description=The main input text for the LLM" validate:"required"`
+	Output          string          `json:"output,omitempty" jsonschema:"description=Specification for the expected output format"`
+	Context         string          `json:"context,omitempty" jsonschema:"description=Additional context for the LLM"`
+	SystemPrompt    string          `json:"system_prompt,omitempty" jsonschema:"description=System prompt for the LLM"`
+	SystemCacheType CacheType       `json:"system_cache_type,omitempty" jsonschema:"description=Cache type for the system prompt"`
+	Directives      []string        `json:"directives,omitempty" jsonschema:"description=List of directives to guide the LLM"`
+	Examples        []string        `json:"examples,omitempty" jsonschema:"description=List of examples to guide the LLM"`
+	Messages        []PromptMessage `json:"messages,omitempty" jsonschema:"description=List of messages for the conversation"`
+	Tools           []models.Tool   `json:"tools,omitempty" jsonschema:"description=Available tools for the LLM to use"`
+	MaxLength       int             `json:"max_length,omitempty" jsonschema:"minimum=1,description=Maximum length of the response in words" validate:"omitempty,min=1"`
 }
 
 // PromptOption is a function type that modifies a Prompt.
@@ -128,7 +162,7 @@ func WithMessage(role, content string, cacheType CacheType) PromptOption {
 //
 // Parameters:
 //   - tools: List of available tools
-func WithTools(tools []utils.Tool) PromptOption {
+func WithTools(tools []models.Tool) PromptOption {
 	return func(p *Prompt) {
 		p.Tools = tools
 	}
@@ -140,7 +174,7 @@ func WithTools(tools []utils.Tool) PromptOption {
 //   - choice: Tool selection strategy
 func WithToolChoice(choice string) PromptOption {
 	return func(p *Prompt) {
-		p.ToolChoice = map[string]interface{}{
+		p.ToolChoice = map[string]any{
 			"type": choice,
 		}
 	}
@@ -196,12 +230,6 @@ func WithMaxLength(length int) PromptOption {
 	}
 }
 
-func WithJSONSchemaValidation() GenerateOption {
-	return func(c *GenerateConfig) {
-		c.UseJSONSchema = true
-	}
-}
-
 // WithExamples adds example conversations or outputs to guide the LLM.
 // If a single example ends with .txt or .jsonl, it's treated as a file path.
 //
@@ -210,7 +238,7 @@ func WithJSONSchemaValidation() GenerateOption {
 func WithExamples(examples ...string) PromptOption {
 	return func(p *Prompt) {
 		if len(examples) == 1 && strings.HasSuffix(examples[0], ".txt") || strings.HasSuffix(examples[0], ".jsonl") {
-			fileExamples, err := utils.ReadExamplesFromFile(examples[0])
+			fileExamples, err := ReadExamplesFromFile(examples[0])
 			if err != nil {
 				panic(fmt.Sprintf("Failed to read examples from file: %v", err))
 			}
@@ -322,7 +350,11 @@ func (p *Prompt) GenerateJSONSchema(opts ...SchemaOption) ([]byte, error) {
 		opt(reflector)
 	}
 	schema := reflector.Reflect(p)
-	return schema.MarshalJSON()
+	jsonData, err := schema.MarshalJSON()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal JSON schema: %w", err)
+	}
+	return jsonData, nil
 }
 
 // SchemaOption is a function type for configuring JSON schema generation.

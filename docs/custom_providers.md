@@ -24,7 +24,7 @@ Gollm offers a spectrum of approaches for provider creation, from simplest to mo
 For most API-compatible providers, this is all you need:
 
 ```go
-import "github.com/teilomillet/gollm/providers"
+import "github.com/weave-labs/gollm/providers"
 
 // Define provider configuration
 config := providers.ProviderConfig{
@@ -89,8 +89,8 @@ package providers
 import (
     "encoding/json"
     "fmt"
-    "github.com/teilomillet/gollm/config"
-    "github.com/teilomillet/gollm/utils"
+    "github.com/weave-labs/gollm/config"
+    "github.com/weave-labs/gollm/utils"
 )
 
 // Define your provider struct
@@ -98,7 +98,7 @@ type CustomProvider struct {
     apiKey       string
     model        string
     extraHeaders map[string]string
-    options      map[string]interface{}
+    options      map[string]any
     logger       utils.Logger
 }
 
@@ -112,7 +112,7 @@ func NewCustomProvider(apiKey, model string, extraHeaders map[string]string) Pro
         apiKey:       apiKey,
         model:        model,
         extraHeaders: extraHeaders,
-        options:      make(map[string]interface{}),
+        options:      make(map[string]any),
         logger:       utils.NewLogger(utils.LogLevelInfo),
     }
 }
@@ -144,9 +144,9 @@ func (p *CustomProvider) Headers() map[string]string {
     return headers
 }
 
-func (p *CustomProvider) PrepareRequest(prompt string, options map[string]interface{}) ([]byte, error) {
+func (p *CustomProvider) PrepareRequest(prompt string, options map[string]any) ([]byte, error) {
     // Create the custom request format
-    request := map[string]interface{}{
+    request := map[string]any{
         "text":       prompt,
         "model_name": p.model,
     }
@@ -195,17 +195,17 @@ import (
     "net/http"
     "strings"
     
-    "github.com/teilomillet/gollm"
-    "github.com/teilomillet/gollm/config"
-    "github.com/teilomillet/gollm/providers"
-    "github.com/teilomillet/gollm/utils"
+    "github.com/weave-labs/gollm"
+    "github.com/weave-labs/gollm/config"
+    "github.com/weave-labs/gollm/providers"
+    "github.com/weave-labs/gollm/utils"
 )
 
 // LocalProvider is a custom provider for a local LLM server
 type LocalProvider struct {
     serverURL    string
     extraHeaders map[string]string
-    options      map[string]interface{}
+    options      map[string]any
     logger       utils.Logger
 }
 
@@ -220,7 +220,7 @@ func NewLocalProvider(apiKey, model string, extraHeaders map[string]string) prov
     return &LocalProvider{
         serverURL:    serverURL,
         extraHeaders: extraHeaders,
-        options:      map[string]interface{}{"model": model},
+        options:      map[string]any{"model": model},
         logger:       utils.NewLogger(utils.LogLevelInfo),
     }
 }
@@ -249,8 +249,8 @@ func (p *LocalProvider) Headers() map[string]string {
 }
 
 // PrepareRequest creates the request body
-func (p *LocalProvider) PrepareRequest(prompt string, options map[string]interface{}) ([]byte, error) {
-    request := map[string]interface{}{
+func (p *LocalProvider) PrepareRequest(prompt string, options map[string]any) ([]byte, error) {
+    request := map[string]any{
         "prompt": prompt,
     }
     
@@ -327,7 +327,7 @@ package providers_test
 import (
     "testing"
     
-    "github.com/teilomillet/gollm/providers"
+    "github.com/weave-labs/gollm/providers"
 )
 
 func TestCustomProvider(t *testing.T) {

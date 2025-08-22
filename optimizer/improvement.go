@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/teilomillet/gollm/llm"
+	"github.com/weave-labs/gollm/llm"
 )
 
 // generateImprovedPrompt creates an enhanced version of a prompt based on its assessment
@@ -16,8 +16,9 @@ import (
 // The improvement process:
 // 1. Analyzes previous assessment and optimization history
 // 2. Generates two alternative improvements:
-//    - Incremental: Refines existing approach
-//    - Bold: Reimagines prompt structure
+//   - Incremental: Refines existing approach
+//   - Bold: Reimagines prompt structure
+//
 // 3. Evaluates expected impact of each version
 // 4. Selects the version with higher potential impact
 //
@@ -55,9 +56,52 @@ import (
 //	        "bold": 18.0
 //	    }
 //	}
-func (po *PromptOptimizer) generateImprovedPrompt(ctx context.Context, prevEntry OptimizationEntry) (*llm.Prompt, error) {
+func (po *PromptOptimizer) generateImprovedPrompt(
+	ctx context.Context,
+	prevEntry *OptimizationEntry,
+) (*llm.Prompt, error) {
+	improvePrompt := po.createImprovementPrompt(prevEntry)
+
+	// Log the improvement request for debugging
+	po.debugManager.LogPrompt("improvement_request", improvePrompt.String())
+
+	// Generate improvements using LLM
+	response, err := po.llm.Generate(ctx, improvePrompt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate improved prompt: %w", err)
+	}
+
+	// Log the raw response for debugging
+	po.debugManager.LogResponse("improvement_response", response.AsText())
+
+	// Extract and parse JSON response
+	cleanedResponse := cleanJSONResponse(response.AsText())
+
+	var improvedPrompts struct {
+		IncrementalImprovement llm.Prompt `json:"incremental_improvement"`
+		BoldRedesign           llm.Prompt `json:"bold_redesign"`
+		ExpectedImpact         struct {
+			Incremental float64 `json:"incremental"`
+			Bold        float64 `json:"bold"`
+		} `json:"expected_impact"`
+	}
+
+	err = json.Unmarshal([]byte(cleanedResponse), &improvedPrompts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse improved prompts: %w", err)
+	}
+
+	// Select the improvement with higher expected impact
+	if improvedPrompts.ExpectedImpact.Bold > improvedPrompts.ExpectedImpact.Incremental {
+		return &improvedPrompts.BoldRedesign, nil
+	}
+	return &improvedPrompts.IncrementalImprovement, nil
+}
+
+// createImprovementPrompt creates the prompt for generating improvements
+func (po *PromptOptimizer) createImprovementPrompt(prevEntry *OptimizationEntry) *llm.Prompt {
 	recentHistory := po.recentHistory()
-	improvePrompt := llm.NewPrompt(fmt.Sprintf(`
+	return llm.NewPrompt(fmt.Sprintf(`
 		Based on the following assessment and recent history, generate an improved version of the entire prompt structure:
 
 		Previous prompt: %+v
@@ -107,39 +151,4 @@ func (po *PromptOptimizer) generateImprovedPrompt(ctx context.Context, prevEntry
 
 		Double-check that your response is valid JSON before submitting.
 	`, prevEntry.Prompt, prevEntry.Assessment, recentHistory, po.taskDesc, po.optimizationGoal))
-
-	// Log the improvement request for debugging
-	po.debugManager.LogPrompt(improvePrompt.String())
-
-	// Generate improvements using LLM
-	response, err := po.llm.Generate(ctx, improvePrompt)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate improved prompt: %w", err)
-	}
-
-	// Log the raw response for debugging
-	po.debugManager.LogResponse(response)
-
-	// Extract and parse JSON response
-	cleanedResponse := cleanJSONResponse(response)
-
-	var improvedPrompts struct {
-		IncrementalImprovement llm.Prompt `json:"incrementalImprovement"`
-		BoldRedesign           llm.Prompt `json:"boldRedesign"`
-		ExpectedImpact         struct {
-			Incremental float64 `json:"incremental"`
-			Bold        float64 `json:"bold"`
-		} `json:"expectedImpact"`
-	}
-
-	err = json.Unmarshal([]byte(cleanedResponse), &improvedPrompts)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse improved prompts: %w", err)
-	}
-
-	// Select the improvement with higher expected impact
-	if improvedPrompts.ExpectedImpact.Bold > improvedPrompts.ExpectedImpact.Incremental {
-		return &improvedPrompts.BoldRedesign, nil
-	}
-	return &improvedPrompts.IncrementalImprovement, nil
 }
