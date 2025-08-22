@@ -12,7 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/modelcontextprotocol/go-sdk/jsonschema"
+	"github.com/invopop/jsonschema"
+
+	modexv1 "github.com/weave-labs/weave-go/weaveapi/modex/v1"
 
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
@@ -135,7 +137,7 @@ func (l *LLMImpl) Generate(ctx context.Context, prompt *Prompt, opts ...Generate
 
 // GenerateStream initiates a streaming response from the LLM.
 func (l *LLMImpl) GenerateStream(ctx context.Context, prompt *Prompt, opts ...GenerateOption) (TokenStream, error) {
-	if !l.Provider.HasCapability(providers.CapStreaming, l.config.Model) {
+	if !l.Provider.HasCapability(modexv1.CapabilityType_CAPABILITY_TYPE_STREAMING, l.config.Model) {
 		return nil, NewLLMError(ErrorTypeUnsupported, "streaming not supported by provider", nil)
 	}
 

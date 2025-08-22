@@ -3,7 +3,7 @@ package providers
 import (
 	"encoding/json"
 
-	"github.com/modelcontextprotocol/go-sdk/jsonschema"
+	"github.com/invopop/jsonschema"
 )
 
 // Request represents a unified request structure

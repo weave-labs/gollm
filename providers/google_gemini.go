@@ -7,12 +7,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/modelcontextprotocol/go-sdk/jsonschema"
-
-	"github.com/weave-labs/gollm/internal/models"
+	"github.com/invopop/jsonschema"
 
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
+	"github.com/weave-labs/gollm/internal/models"
 	modexv1 "github.com/weave-labs/weave-go/weaveapi/modex/v1"
 )
 
