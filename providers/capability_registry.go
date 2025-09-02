@@ -1,12 +1,13 @@
 package providers
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/puzpuzpuz/xsync/v4"
 
-	"github.com/weave-labs/weave-go/weaveapi/modex/v1"
+	"github.com/weave-labs/weave-go/weaveapi/llmx/v1"
 )
 
 var (
@@ -34,7 +35,7 @@ func GetCapabilityRegistry() *CapabilityRegistry {
 func (r *CapabilityRegistry) RegisterCapability(
 	provider string,
 	model string,
-	capType modex.CapabilityType,
+	capType llmx.CapabilityType,
 	config any,
 ) {
 	modelCaps, _ := r.models.LoadOrStore(makeSlug(provider, model), NewModelCapabilities())
@@ -42,7 +43,7 @@ func (r *CapabilityRegistry) RegisterCapability(
 }
 
 // HasCapability checks if a capability is registered for a specific provider and model.
-func (r *CapabilityRegistry) HasCapability(provider string, model string, capType modex.CapabilityType) bool {
+func (r *CapabilityRegistry) HasCapability(provider string, model string, capType llmx.CapabilityType) bool {
 	modelCaps, exists := r.models.Load(makeSlug(provider, model))
 	if !exists {
 		return false
@@ -51,7 +52,7 @@ func (r *CapabilityRegistry) HasCapability(provider string, model string, capTyp
 	return modelCaps.HasCapability(capType)
 }
 
-func (r *CapabilityRegistry) GetConfig(provider string, model string, capType modex.CapabilityType) any {
+func (r *CapabilityRegistry) GetConfig(provider string, model string, capType llmx.CapabilityType) any {
 	modelCaps, exists := r.models.Load(makeSlug(provider, model))
 	if !exists {
 		return nil
@@ -75,9 +76,9 @@ func makeSlug(provider string, model string) string {
 func GetCapability[T any](provider string, model string) (T, error) {
 	zeroVal := *new(T)
 
-	getTyper, ok := any(zeroVal).(interface{ GetType() modex.CapabilityType })
+	getTyper, ok := any(zeroVal).(interface{ GetType() llmx.CapabilityType })
 	if !ok {
-		return zeroVal, fmt.Errorf("capability type not supported")
+		return zeroVal, errors.New("capability type not supported")
 	}
 
 	capName := getTyper.GetType()
@@ -100,7 +101,7 @@ type ModelCapabilities []any
 // NewModelCapabilities creates a new capability registry.
 func NewModelCapabilities() ModelCapabilities {
 	var maxCapabilityVal int
-	for _, value := range modex.CapabilityType_value {
+	for _, value := range llmx.CapabilityType_value {
 		if int(value) > maxCapabilityVal {
 			maxCapabilityVal = int(value)
 		}
@@ -110,8 +111,8 @@ func NewModelCapabilities() ModelCapabilities {
 }
 
 // AddCapability registers a capability configuration for a given type.
-// The config should be the actual proto type (e.g., *modex.StructuredResponseCapability).
-func (r ModelCapabilities) AddCapability(capType modex.CapabilityType, config any) {
+// The config should be the actual proto type (e.g., *llmx.StructuredResponseCapability).
+func (r ModelCapabilities) AddCapability(capType llmx.CapabilityType, config any) {
 	if int(capType) < len(r) {
 		r[capType] = config
 	}
@@ -119,7 +120,7 @@ func (r ModelCapabilities) AddCapability(capType modex.CapabilityType, config an
 
 // GetCapability retrieves a capability configuration for a given type.
 // Returns nil if not found.
-func (r ModelCapabilities) GetCapability(capType modex.CapabilityType) any {
+func (r ModelCapabilities) GetCapability(capType llmx.CapabilityType) any {
 	if int(capType) < len(r) {
 		return r[capType]
 	}
@@ -128,7 +129,7 @@ func (r ModelCapabilities) GetCapability(capType modex.CapabilityType) any {
 }
 
 // HasCapability checks if a capability is registered.
-func (r ModelCapabilities) HasCapability(capType modex.CapabilityType) bool {
+func (r ModelCapabilities) HasCapability(capType llmx.CapabilityType) bool {
 	if int(capType) < len(r) {
 		return r[capType] != nil
 	}

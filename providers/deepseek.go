@@ -12,7 +12,7 @@ import (
 
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
-	"github.com/weave-labs/weave-go/weaveapi/modex/v1"
+	"github.com/weave-labs/weave-go/weaveapi/llmx/v1"
 )
 
 // Common parameter keys
@@ -133,20 +133,20 @@ func (p *DeepSeekProvider) registerCapabilities() {
 
 	for _, model := range allModels {
 		// Most DeepSeek models support function calling
-		registry.RegisterCapability(ProviderDeepSeek, model, modex.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
-			&modex.FunctionCalling{
+		registry.RegisterCapability(ProviderDeepSeek, model, llmx.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
+			&llmx.FunctionCalling{
 				MaxFunctions:      64,
 				SupportsParallel:  true,
 				MaxParallelCalls:  5,
 				RequiresToolRole:  false,
 				SupportsStreaming: false,
-				SupportedParameterTypes: []modex.JsonSchemaType{
-					modex.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
-					modex.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
-					modex.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
-					modex.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
-					modex.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
-					modex.JsonSchemaType_JSON_SCHEMA_TYPE_NULL,
+				SupportedParameterTypes: []llmx.JsonSchemaType{
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_NULL,
 				},
 				MaxNestingDepth: 10,
 			})
@@ -156,25 +156,25 @@ func (p *DeepSeekProvider) registerCapabilities() {
 			model == "deepseek-r1" || model == "deepseek-v2.5" ||
 			model == "deepseek-v2-chat" || model == "deepseek-coder-v2-instruct" {
 			registry.RegisterCapability(ProviderDeepSeek, model,
-				modex.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &modex.StructuredResponse{
+				llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &llmx.StructuredResponse{
 					RequiresToolUse:  false,
 					MaxSchemaDepth:   10,
-					SupportedFormats: []modex.DataFormat{modex.DataFormat_DATA_FORMAT_JSON},
+					SupportedFormats: []llmx.DataFormat{llmx.DataFormat_DATA_FORMAT_JSON},
 					RequiresJsonMode: true,
-					SupportedTypes: []modex.JsonSchemaType{
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					SupportedTypes: []llmx.JsonSchemaType{
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
 					},
 					MaxProperties: 100,
 				})
 		}
 
 		// All models support streaming
-		registry.RegisterCapability(ProviderDeepSeek, model, modex.CapabilityType_CAPABILITY_TYPE_STREAMING,
-			&modex.Streaming{
+		registry.RegisterCapability(ProviderDeepSeek, model, llmx.CapabilityType_CAPABILITY_TYPE_STREAMING,
+			&llmx.Streaming{
 				SupportsSse:    true,
 				BufferSize:     4096,
 				ChunkDelimiter: "data: ",
@@ -182,18 +182,18 @@ func (p *DeepSeekProvider) registerCapabilities() {
 			})
 
 		// System prompt support for all models
-		registry.RegisterCapability(ProviderDeepSeek, model, modex.CapabilityType_CAPABILITY_TYPE_SYSTEM_PROMPT,
-			&modex.SystemPrompt{
+		registry.RegisterCapability(ProviderDeepSeek, model, llmx.CapabilityType_CAPABILITY_TYPE_SYSTEM_PROMPT,
+			&llmx.SystemPrompt{
 				MaxLength:        8192,
 				SupportsMultiple: false,
 				SupportsCaching:  false,
-				Format:           modex.DataFormat_DATA_FORMAT_PLAIN,
+				Format:           llmx.DataFormat_DATA_FORMAT_PLAIN,
 			})
 	}
 }
 
 // HasCapability checks if a capability is supported
-func (p *DeepSeekProvider) HasCapability(capability modex.CapabilityType, model string) bool {
+func (p *DeepSeekProvider) HasCapability(capability llmx.CapabilityType, model string) bool {
 	targetModel := p.model
 	if model != "" {
 		targetModel = model

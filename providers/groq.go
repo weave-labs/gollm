@@ -9,7 +9,7 @@ import (
 
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
-	"github.com/weave-labs/weave-go/weaveapi/modex/v1"
+	"github.com/weave-labs/weave-go/weaveapi/llmx/v1"
 )
 
 // Groq-specific parameter keys
@@ -111,37 +111,37 @@ func (p *GroqProvider) registerCapabilities() {
 
 	for _, model := range allModels {
 		// Structured response support - all Groq models
-		registry.RegisterCapability(ProviderGroq, model, modex.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE,
-			&modex.StructuredResponse{
+		registry.RegisterCapability(ProviderGroq, model, llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE,
+			&llmx.StructuredResponse{
 				RequiresToolUse:  false,
 				MaxSchemaDepth:   10,
-				SupportedFormats: []modex.DataFormat{modex.DataFormat_DATA_FORMAT_JSON},
+				SupportedFormats: []llmx.DataFormat{llmx.DataFormat_DATA_FORMAT_JSON},
 				RequiresJsonMode: true,
-				SupportedTypes: []modex.JsonSchemaType{
-					modex.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
-					modex.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
-					modex.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
-					modex.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
-					modex.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+				SupportedTypes: []llmx.JsonSchemaType{
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
 				},
 				MaxProperties: 100,
 			})
 
 		// Function calling - most Groq models support it (exclude guard models)
 		if !slices.Contains([]string{"llama-guard-3-8b"}, model) {
-			registry.RegisterCapability(ProviderGroq, model, modex.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
-				&modex.FunctionCalling{
+			registry.RegisterCapability(ProviderGroq, model, llmx.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
+				&llmx.FunctionCalling{
 					MaxFunctions:      100,
 					SupportsParallel:  true,
 					MaxParallelCalls:  10,
 					SupportsStreaming: true,
 					RequiresToolRole:  false,
-					SupportedParameterTypes: []modex.JsonSchemaType{
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					SupportedParameterTypes: []llmx.JsonSchemaType{
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
 					},
 					MaxNestingDepth: 10,
 				})
@@ -149,8 +149,8 @@ func (p *GroqProvider) registerCapabilities() {
 
 		// Streaming - most models support it
 		if !slices.Contains([]string{"llama-guard-3-8b"}, model) {
-			registry.RegisterCapability(ProviderGroq, model, modex.CapabilityType_CAPABILITY_TYPE_STREAMING,
-				&modex.Streaming{
+			registry.RegisterCapability(ProviderGroq, model, llmx.CapabilityType_CAPABILITY_TYPE_STREAMING,
+				&llmx.Streaming{
 					SupportsSse:    true,
 					BufferSize:     4096,
 					ChunkDelimiter: "data: ",
@@ -161,7 +161,7 @@ func (p *GroqProvider) registerCapabilities() {
 }
 
 // HasCapability checks if a capability is supported
-func (p *GroqProvider) HasCapability(capability modex.CapabilityType, model string) bool {
+func (p *GroqProvider) HasCapability(capability llmx.CapabilityType, model string) bool {
 	targetModel := p.model
 	if model != "" {
 		targetModel = model
@@ -259,7 +259,7 @@ func (p *GroqProvider) PrepareStreamRequest(req *Request, options map[string]any
 		model = m
 	}
 
-	if !p.HasCapability(modex.CapabilityType_CAPABILITY_TYPE_STREAMING, model) {
+	if !p.HasCapability(llmx.CapabilityType_CAPABILITY_TYPE_STREAMING, model) {
 		return nil, errors.New("streaming is not supported by this provider")
 	}
 

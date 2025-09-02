@@ -7,7 +7,7 @@ package providers
 import (
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
-	"github.com/weave-labs/weave-go/weaveapi/modex/v1"
+	"github.com/weave-labs/weave-go/weaveapi/llmx/v1"
 )
 
 const (
@@ -42,7 +42,7 @@ type Provider interface {
 	ParseStreamResponse(chunk []byte) (*Response, error)
 
 	// Capability checking - accepts optional model parameter to check a specific model's capabilities
-	HasCapability(capability modex.CapabilityType, model string) bool
+	HasCapability(capability llmx.CapabilityType, model string) bool
 }
 
 // ProviderConfig holds the configuration for a provider

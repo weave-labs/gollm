@@ -9,7 +9,7 @@ import (
 
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
-	"github.com/weave-labs/weave-go/weaveapi/modex/v1"
+	"github.com/weave-labs/weave-go/weaveapi/llmx/v1"
 )
 
 const (
@@ -98,17 +98,17 @@ func (p *CohereProvider) registerCapabilities() {
 		if slices.Contains(structuredResponseModels, model) {
 			// IMPORTANT: Cohere quirk - structured response only via tool calling
 			registry.RegisterCapability(ProviderCohere, model,
-				modex.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &modex.StructuredResponse{
+				llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &llmx.StructuredResponse{
 					RequiresToolUse:  true, // THE COHERE QUIRK!
 					MaxSchemaDepth:   5,
-					SupportedFormats: []modex.DataFormat{modex.DataFormat_DATA_FORMAT_JSON},
+					SupportedFormats: []llmx.DataFormat{llmx.DataFormat_DATA_FORMAT_JSON},
 					SystemPromptHint: "You must use the provided tool to structure your response",
-					SupportedTypes: []modex.JsonSchemaType{
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					SupportedTypes: []llmx.JsonSchemaType{
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
 					},
 					MaxProperties: 100,
 				})
@@ -116,44 +116,44 @@ func (p *CohereProvider) registerCapabilities() {
 
 		// Function calling support
 		if strings.Contains(model, "command-r") {
-			registry.RegisterCapability(ProviderCohere, model, modex.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
-				&modex.FunctionCalling{
+			registry.RegisterCapability(ProviderCohere, model, llmx.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
+				&llmx.FunctionCalling{
 					MaxFunctions:      50,
 					SupportsParallel:  false,
 					RequiresToolRole:  true,
 					SupportsStreaming: true,
 					MaxParallelCalls:  1,
-					SupportedParameterTypes: []modex.JsonSchemaType{
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					SupportedParameterTypes: []llmx.JsonSchemaType{
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
 					},
 					MaxNestingDepth: 5,
 				})
 		} else if strings.Contains(model, "command") {
-			registry.RegisterCapability(ProviderCohere, model, modex.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
-				&modex.FunctionCalling{
+			registry.RegisterCapability(ProviderCohere, model, llmx.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
+				&llmx.FunctionCalling{
 					MaxFunctions:      20,
 					SupportsParallel:  false,
 					RequiresToolRole:  true,
 					SupportsStreaming: false,
 					MaxParallelCalls:  1,
-					SupportedParameterTypes: []modex.JsonSchemaType{
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					SupportedParameterTypes: []llmx.JsonSchemaType{
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
 					},
 					MaxNestingDepth: 5,
 				})
 		}
 
 		// All Cohere models support streaming
-		registry.RegisterCapability(ProviderCohere, model, modex.CapabilityType_CAPABILITY_TYPE_STREAMING,
-			&modex.Streaming{
+		registry.RegisterCapability(ProviderCohere, model, llmx.CapabilityType_CAPABILITY_TYPE_STREAMING,
+			&llmx.Streaming{
 				SupportsSse:    true,
 				BufferSize:     8192,
 				ChunkDelimiter: "\n",
@@ -163,7 +163,7 @@ func (p *CohereProvider) registerCapabilities() {
 }
 
 // HasCapability checks if a capability is supported
-func (p *CohereProvider) HasCapability(capability modex.CapabilityType, model string) bool {
+func (p *CohereProvider) HasCapability(capability llmx.CapabilityType, model string) bool {
 	targetModel := p.model
 	if model != "" {
 		targetModel = model
@@ -252,7 +252,7 @@ func (p *CohereProvider) PrepareRequest(req *Request, options map[string]any) ([
 		requestBody[cohereKeyPreamble] = systemPrompt
 	}
 
-	if req.ResponseSchema != nil && p.HasCapability(modex.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
+	if req.ResponseSchema != nil && p.HasCapability(llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
 		p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 	}
 
@@ -344,7 +344,7 @@ func (p *CohereProvider) PrepareStreamRequest(req *Request, options map[string]a
 		requestBody[cohereKeyPreamble] = systemPrompt
 	}
 
-	if req.ResponseSchema != nil && p.HasCapability(modex.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
+	if req.ResponseSchema != nil && p.HasCapability(llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
 		p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 	}
 

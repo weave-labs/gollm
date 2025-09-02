@@ -12,7 +12,7 @@ import (
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
 	"github.com/weave-labs/gollm/internal/models"
-	"github.com/weave-labs/weave-go/weaveapi/modex/v1"
+	"github.com/weave-labs/weave-go/weaveapi/llmx/v1"
 )
 
 // Gemini-specific parameter keys
@@ -155,17 +155,17 @@ func (p *GeminiProvider) registerCapabilities() {
 		// Check if model supports structured response
 		if contains(structuredResponseModels, model) {
 			registry.RegisterCapability(ProviderGemini, model,
-				modex.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &modex.StructuredResponse{
+				llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &llmx.StructuredResponse{
 					RequiresToolUse:  false,
 					MaxSchemaDepth:   10,
-					SupportedFormats: []modex.DataFormat{modex.DataFormat_DATA_FORMAT_JSON},
+					SupportedFormats: []llmx.DataFormat{llmx.DataFormat_DATA_FORMAT_JSON},
 					RequiresJsonMode: false,
-					SupportedTypes: []modex.JsonSchemaType{
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					SupportedTypes: []llmx.JsonSchemaType{
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
 					},
 					MaxProperties: 100,
 				})
@@ -173,19 +173,19 @@ func (p *GeminiProvider) registerCapabilities() {
 
 		// Check if model supports function calling
 		if contains(functionCallingModels, model) {
-			registry.RegisterCapability(ProviderGemini, model, modex.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
-				&modex.FunctionCalling{
+			registry.RegisterCapability(ProviderGemini, model, llmx.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
+				&llmx.FunctionCalling{
 					MaxFunctions:      64,
 					SupportsParallel:  true,
 					MaxParallelCalls:  5,
 					RequiresToolRole:  false,
 					SupportsStreaming: true,
-					SupportedParameterTypes: []modex.JsonSchemaType{
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
-						modex.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					SupportedParameterTypes: []llmx.JsonSchemaType{
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
 					},
 					MaxNestingDepth: 10,
 				})
@@ -193,17 +193,16 @@ func (p *GeminiProvider) registerCapabilities() {
 
 		// Check if model supports vision
 		if contains(visionModels, model) {
-			registry.RegisterCapability(ProviderGemini, model, modex.CapabilityType_CAPABILITY_TYPE_VISION,
-				&modex.Vision{
+			registry.RegisterCapability(ProviderGemini, model, llmx.CapabilityType_CAPABILITY_TYPE_VISION,
+				&llmx.Vision{
 					MaxImageSizeBytes: 20 * 1024 * 1024, // 20MB
-					SupportedFormats: []modex.ImageFormat{
-						modex.ImageFormat_IMAGE_FORMAT_JPEG,
-						modex.ImageFormat_IMAGE_FORMAT_PNG,
-						modex.ImageFormat_IMAGE_FORMAT_GIF,
-						modex.ImageFormat_IMAGE_FORMAT_WEBP,
+					SupportedFormats: []llmx.ImageFormat{
+						llmx.ImageFormat_IMAGE_FORMAT_JPEG,
+						llmx.ImageFormat_IMAGE_FORMAT_PNG,
+						llmx.ImageFormat_IMAGE_FORMAT_GIF,
+						llmx.ImageFormat_IMAGE_FORMAT_WEBP,
 					},
 					MaxImagesPerRequest:     16,
-					SupportsImageGeneration: false,
 					SupportsVideoFrames:     false,
 					SupportsOcr:             true,
 					SupportsObjectDetection: false,
@@ -211,8 +210,8 @@ func (p *GeminiProvider) registerCapabilities() {
 		}
 
 		// All Gemini models support streaming
-		registry.RegisterCapability(ProviderGemini, model, modex.CapabilityType_CAPABILITY_TYPE_STREAMING,
-			&modex.Streaming{
+		registry.RegisterCapability(ProviderGemini, model, llmx.CapabilityType_CAPABILITY_TYPE_STREAMING,
+			&llmx.Streaming{
 				SupportsSse:    true,
 				BufferSize:     4096,
 				ChunkDelimiter: "data: ",
@@ -220,12 +219,12 @@ func (p *GeminiProvider) registerCapabilities() {
 			})
 
 		// System prompt support for all models
-		registry.RegisterCapability(ProviderGemini, model, modex.CapabilityType_CAPABILITY_TYPE_SYSTEM_PROMPT,
-			&modex.SystemPrompt{
+		registry.RegisterCapability(ProviderGemini, model, llmx.CapabilityType_CAPABILITY_TYPE_SYSTEM_PROMPT,
+			&llmx.SystemPrompt{
 				MaxLength:        32768,
 				SupportsMultiple: false,
 				SupportsCaching:  false,
-				Format:           modex.DataFormat_DATA_FORMAT_PLAIN,
+				Format:           llmx.DataFormat_DATA_FORMAT_PLAIN,
 			})
 	}
 }
@@ -241,7 +240,7 @@ func contains(slice []string, item string) bool {
 }
 
 // HasCapability checks if a capability is supported
-func (p *GeminiProvider) HasCapability(capability modex.CapabilityType, model string) bool {
+func (p *GeminiProvider) HasCapability(capability llmx.CapabilityType, model string) bool {
 	targetModel := p.model
 	if model != "" {
 		targetModel = model
@@ -338,7 +337,7 @@ func (p *GeminiProvider) PrepareStreamRequest(req *Request, options map[string]a
 		model = m
 	}
 
-	if !p.HasCapability(modex.CapabilityType_CAPABILITY_TYPE_STREAMING, model) {
+	if !p.HasCapability(llmx.CapabilityType_CAPABILITY_TYPE_STREAMING, model) {
 		return nil, errors.New("streaming is not supported by this provider")
 	}
 

@@ -1,6 +1,6 @@
 module github.com/weave-labs/gollm
 
-go 1.24
+go 1.24.0
 
 toolchain go1.24.1
 
@@ -12,7 +12,7 @@ require (
 	github.com/pkoukk/tiktoken-go v0.1.7
 	github.com/puzpuzpuz/xsync/v4 v4.1.0
 	github.com/stretchr/testify v1.10.0
-	github.com/weave-labs/weave-go v0.21.0
+	github.com/weave-labs/weave-go v0.25.1
 	golang.org/x/time v0.11.0
 )
 
@@ -39,7 +39,7 @@ require (
 	golang.org/x/net v0.42.0 // indirect
 	golang.org/x/sys v0.34.0 // indirect
 	golang.org/x/text v0.28.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20250818200422-3122310a409c // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20250826171959-ef028d996bc1 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250818200422-3122310a409c // indirect
 	google.golang.org/grpc v1.75.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect

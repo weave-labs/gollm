@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/modelcontextprotocol/go-sdk/jsonschema"
+	"github.com/invopop/jsonschema"
 	"github.com/stretchr/testify/require"
 
 	"github.com/weave-labs/gollm/internal/logging"

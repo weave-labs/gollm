@@ -6,9 +6,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/weave-labs/gollm/providers"
 	"io"
 	"time"
+
+	"github.com/weave-labs/gollm/providers"
 )
 
 // StreamToken represents a single token from the streaming response.
