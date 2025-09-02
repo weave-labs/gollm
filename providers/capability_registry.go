@@ -1,114 +1,138 @@
-// Package providers implements various Language Learning Model (LLM) provider interfaces
 package providers
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/puzpuzpuz/xsync/v4"
+
+	"github.com/weave-labs/weave-go/weaveapi/llmx/v1"
 )
 
-// globalRegistry is the singleton instance of the capability registry
 var (
-	globalRegistry *CapabilityRegistry
-	registryOnce   sync.Once
+	registry     *CapabilityRegistry
+	registryOnce sync.Once
 )
 
-// CapabilityRegistry is a global registry for provider capabilities
+// CapabilityRegistry manages capabilities for all providers and models.
 type CapabilityRegistry struct {
-	// Using xsync.MapOf for lock-free concurrent access
-	// Key is provider:model string, value is map of capabilities
-	capabilities *xsync.Map[string, map[Capability]CapabilityConfig]
+	models *xsync.Map[string, ModelCapabilities] // key: "provider:model"
 }
 
-// GetRegistry returns the singleton instance of the CapabilityRegistry
-func GetRegistry() *CapabilityRegistry {
+// GetCapabilityRegistry returns the singleton global capability registry.
+func GetCapabilityRegistry() *CapabilityRegistry {
 	registryOnce.Do(func() {
-		globalRegistry = &CapabilityRegistry{
-			capabilities: xsync.NewMap[string, map[Capability]CapabilityConfig](),
+		registry = &CapabilityRegistry{
+			models: xsync.NewMap[string, ModelCapabilities](),
 		}
 	})
-	return globalRegistry
+
+	return registry
 }
 
-// Register adds a capability for a specific provider and model
-func (r *CapabilityRegistry) Register(
-	provider ProviderName,
+// RegisterCapability registers a capability for a specific provider and model.
+func (r *CapabilityRegistry) RegisterCapability(
+	provider string,
 	model string,
-	capability Capability,
-	config CapabilityConfig,
+	capType llmx.CapabilityType,
+	config any,
 ) {
-	if config == nil {
-		return
-	}
-
-	key := r.makeKey(provider, model)
-
-	// Load or create the capability map for this provider:model
-	caps, _ := r.capabilities.LoadOrStore(key, make(map[Capability]CapabilityConfig))
-
-	// Update the capability map
-	// Note: This is a simple assignment, not thread-safe for the inner map
-	// If multiple goroutines register capabilities for the same provider:model simultaneously,
-	// we need to synchronize access to the inner map
-	// For now, we assume registration happens during initialization (single-threaded)
-	caps[capability] = config
+	modelCaps, _ := r.models.LoadOrStore(makeSlug(provider, model), NewModelCapabilities())
+	modelCaps.AddCapability(capType, config)
 }
 
-// HasCapability checks if a provider/model combination has a specific capability
-func (r *CapabilityRegistry) HasCapability(provider ProviderName, model string, capability Capability) bool {
-	key := r.makeKey(provider, model)
-
-	caps, exists := r.capabilities.Load(key)
+// HasCapability checks if a capability is registered for a specific provider and model.
+func (r *CapabilityRegistry) HasCapability(provider string, model string, capType llmx.CapabilityType) bool {
+	modelCaps, exists := r.models.Load(makeSlug(provider, model))
 	if !exists {
 		return false
 	}
 
-	_, hasCapability := caps[capability]
-	return hasCapability
+	return modelCaps.HasCapability(capType)
 }
 
-// GetConfig retrieves the configuration for a specific capability
-func (r *CapabilityRegistry) GetConfig(provider ProviderName, model string, cap Capability) CapabilityConfig {
-	key := r.makeKey(provider, model)
-
-	caps, exists := r.capabilities.Load(key)
+func (r *CapabilityRegistry) GetConfig(provider string, model string, capType llmx.CapabilityType) any {
+	modelCaps, exists := r.models.Load(makeSlug(provider, model))
 	if !exists {
 		return nil
 	}
 
-	return caps[cap]
+	return modelCaps.GetCapability(capType)
 }
 
-// makeKey creates a unique key for provider/model combination
-func (r *CapabilityRegistry) makeKey(provider ProviderName, model string) string {
-	return string(provider) + ":" + model
-}
-
-// Clear removes all registered capabilities (useful for testing)
+// Clear removes all registered capabilities (mainly for testing).
 func (r *CapabilityRegistry) Clear() {
-	r.capabilities.Clear()
+	r.models.Clear()
 }
 
-// GetCapabilityConfig is a generic function to get typed capability config
+// makeSlug creates a unique key for provider and model combination.
+func makeSlug(provider string, model string) string {
+	return provider + "/" + model
+}
+
+// GetCapability is a generic function to get typed capability config
 // The type T itself determines which capability to fetch via its Name() method
-func GetCapabilityConfig[T CapabilityConfig](provider ProviderName, model string) (T, error) {
-	var zero T
+func GetCapability[T any](provider string, model string) (T, error) {
+	zeroVal := *new(T)
 
-	// Create a zero value to get the capability name
-	capName := zero.Name()
+	getTyper, ok := any(zeroVal).(interface{ GetType() llmx.CapabilityType })
+	if !ok {
+		return zeroVal, errors.New("capability type not supported")
+	}
 
-	// Get the config from registry
-	config := GetRegistry().GetConfig(provider, model, capName)
+	capName := getTyper.GetType()
+	config := GetCapabilityRegistry().GetConfig(provider, model, capName)
 	if config == nil {
-		return zero, fmt.Errorf("capability %s not found for provider %s model %s", capName, provider, model)
+		return zeroVal, fmt.Errorf("capability %s not found for provider %s model %s", capName, provider, model)
 	}
 
 	// Type assert to the requested type
 	typedConfig, ok := config.(T)
 	if !ok {
-		return zero, fmt.Errorf("capability config type mismatch: expected %T, got %T", zero, config)
+		return zeroVal, fmt.Errorf("capability config type mismatch: expected %T, got %T", zeroVal, config)
 	}
 
 	return typedConfig, nil
+}
+
+type ModelCapabilities []any
+
+// NewModelCapabilities creates a new capability registry.
+func NewModelCapabilities() ModelCapabilities {
+	var maxCapabilityVal int
+	for _, value := range llmx.CapabilityType_value {
+		if int(value) > maxCapabilityVal {
+			maxCapabilityVal = int(value)
+		}
+	}
+
+	return make([]any, maxCapabilityVal+1)
+}
+
+// AddCapability registers a capability configuration for a given type.
+// The config should be the actual proto type (e.g., *llmx.StructuredResponseCapability).
+func (r ModelCapabilities) AddCapability(capType llmx.CapabilityType, config any) {
+	if int(capType) < len(r) {
+		r[capType] = config
+	}
+}
+
+// GetCapability retrieves a capability configuration for a given type.
+// Returns nil if not found.
+func (r ModelCapabilities) GetCapability(capType llmx.CapabilityType) any {
+	if int(capType) < len(r) {
+		return r[capType]
+	}
+
+	return nil
+}
+
+// HasCapability checks if a capability is registered.
+func (r ModelCapabilities) HasCapability(capType llmx.CapabilityType) bool {
+	if int(capType) < len(r) {
+		return r[capType] != nil
+	}
+
+	return false
 }

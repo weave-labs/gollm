@@ -11,16 +11,18 @@ import (
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
 	"github.com/weave-labs/gollm/internal/models"
+	"github.com/weave-labs/weave-go/weaveapi/llmx/v1"
 )
 
 // Common parameter keys
 const (
-	anthropicKeyMaxTokens     = "max_tokens"
-	anthropicKeyStream        = "stream"
-	anthropicKeySystemPrompt  = "system_prompt"
-	anthropicKeyTools         = "tools"
-	anthropicKeyToolChoice    = "tool_choice"
-	anthropicKeyEnableCaching = "enable_caching"
+	anthropicKeyMaxTokens         = "max_tokens"
+	anthropicKeyStream            = "stream"
+	anthropicKeySystemPrompt      = "system_prompt"
+	anthropicKeyTools             = "tools"
+	anthropicKeyToolChoice        = "tool_choice"
+	anthropicKeyEnableCaching     = "enable_caching"
+	anthropicSystemPromptMaxParts = 3 // Maximum parts for splitting system prompts
 )
 
 // AnthropicProvider implements the Provider interface for Anthropic's Claude API.
@@ -53,7 +55,7 @@ func NewAnthropicProvider(apiKey, model string, extraHeaders map[string]string) 
 		p.extraHeaders["anthropic-beta"] = "prompt-caching-2024-07-31"
 	}
 
-	// Register capabilities based on model
+	// AddCapability capabilities based on model
 	p.registerCapabilities()
 	return p
 }
@@ -92,7 +94,7 @@ func (p *AnthropicProvider) Name() string {
 
 // registerCapabilities registers capabilities for all known Anthropic models
 func (p *AnthropicProvider) registerCapabilities() {
-	registry := GetRegistry()
+	registry := GetCapabilityRegistry()
 
 	// Define all known Anthropic Claude models
 	allModels := []string{
@@ -121,71 +123,127 @@ func (p *AnthropicProvider) registerCapabilities() {
 
 	for _, model := range allModels {
 		// All Claude models support structured responses
-		registry.Register(ProviderAnthropic, model, CapStructuredResponse, StructuredResponseConfig{
-			RequiresToolUse:  false,
-			MaxSchemaDepth:   15,
-			SupportedFormats: []string{"json"},
-			SystemPromptHint: "You must respond with a JSON object that strictly adheres to this schema",
-			RequiresJSONMode: false,
-		})
+		registry.RegisterCapability(ProviderAnthropic, model,
+			llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &llmx.StructuredResponse{
+				RequiresToolUse:  true,
+				SupportedFormats: []llmx.DataFormat{llmx.DataFormat_DATA_FORMAT_JSON},
+				MaxSchemaDepth:   10,
+				MaxProperties:    100,
+				SupportedTypes: []llmx.JsonSchemaType{
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+				},
+			})
 
 		// All Claude models support function calling
-		registry.Register(ProviderAnthropic, model, CapFunctionCalling, FunctionCallingConfig{
-			MaxFunctions:      64,
-			SupportsParallel:  true,
-			MaxParallelCalls:  10,
-			RequiresToolRole:  false,
-			SupportsStreaming: true,
-		})
+		registry.RegisterCapability(ProviderAnthropic, model, llmx.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
+			&llmx.FunctionCalling{
+				MaxFunctions:      64,
+				MaxParallelCalls:  10,
+				SupportsParallel:  true,
+				RequiresToolRole:  false,
+				SupportsStreaming: false,
+				SupportedParameterTypes: []llmx.JsonSchemaType{
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_NULL,
+				},
+				MaxNestingDepth: 10,
+			})
 
 		// All Claude models support streaming
-		registry.Register(ProviderAnthropic, model, CapStreaming, StreamingConfig{
-			SupportsSSE:    true,
-			BufferSize:     4096,
-			ChunkDelimiter: "data: ",
-			SupportsUsage:  true,
-		})
+		registry.RegisterCapability(ProviderAnthropic, model, llmx.CapabilityType_CAPABILITY_TYPE_STREAMING,
+			&llmx.Streaming{
+				ChunkDelimiter: "\n",
+				SupportsSse:    true,
+				SupportsUsage:  true,
+			})
 
-		// Claude 3+ models support caching (legacy models have limited support)
+		// Claude 3+ models support caching
 		if strings.Contains(model, "claude-3") {
-			registry.Register(ProviderAnthropic, model, CapCaching, CachingConfig{
-				MaxCacheSize:     1024 * 1024, // 1MB
-				CacheTTLSeconds:  3600,        // 1 hour
-				CacheKeyStrategy: "ephemeral",
-			})
-		} else {
-			// Legacy models have basic caching
-			registry.Register(ProviderAnthropic, model, CapCaching, CachingConfig{
-				MaxCacheSize:     512 * 1024, // 512KB
-				CacheTTLSeconds:  1800,       // 30 minutes
-				CacheKeyStrategy: "ephemeral",
-			})
+			registry.RegisterCapability(ProviderAnthropic, model, llmx.CapabilityType_CAPABILITY_TYPE_CACHING,
+				&llmx.Caching{
+					CacheKeyStrategy:       llmx.CacheStrategy_CACHE_STRATEGY_SEMANTIC,
+					SupportsContextCaching: true,
+					SupportsPromptCaching:  true,
+					MinCacheableTokens:     1024,
+					CacheTtlSeconds:        300,
+				})
 		}
 
-		// Vision capability for Claude 3+ models
+		// Vision capability for Claude 3 models only
 		if strings.Contains(model, "claude-3") {
-			registry.Register(ProviderAnthropic, model, CapVision, VisionConfig{
-				MaxImageSize:        5 * 1024 * 1024, // 5MB
-				SupportedFormats:    []string{"jpeg", "png", "gif", "webp"},
-				MaxImagesPerRequest: 20,
-			})
+			registry.RegisterCapability(ProviderAnthropic, model, llmx.CapabilityType_CAPABILITY_TYPE_VISION,
+				&llmx.Vision{
+					SupportedFormats: []llmx.ImageFormat{
+						llmx.ImageFormat_IMAGE_FORMAT_JPEG,
+						llmx.ImageFormat_IMAGE_FORMAT_PNG,
+						llmx.ImageFormat_IMAGE_FORMAT_GIF,
+						llmx.ImageFormat_IMAGE_FORMAT_WEBP,
+					},
+					MaxImageSizeBytes:       5 * 1024 * 1024, // 5MB
+					MaxImagesPerRequest:     20,
+					SupportsVideoFrames:     false,
+					MaxResolutionWidth:      8192,
+					MaxResolutionHeight:     8192,
+					SupportsOcr:             true,
+					SupportsObjectDetection: false,
+				})
 		}
 
 		// System prompt support for all models
-		registry.Register(ProviderAnthropic, model, CapSystemPrompt, SystemPromptConfig{
-			MaxLength:        32768,
-			SupportsMultiple: true,
-		})
+		registry.RegisterCapability(ProviderAnthropic, model, llmx.CapabilityType_CAPABILITY_TYPE_SYSTEM_PROMPT,
+			&llmx.SystemPrompt{
+				MaxLength:        100000,
+				SupportsMultiple: true,
+				SupportsCaching:  true,
+				Format:           llmx.DataFormat_DATA_FORMAT_PLAIN,
+			})
+
+		// Vision capability for Claude 3 models only
+		if strings.Contains(model, "claude-3") {
+			registry.RegisterCapability(ProviderAnthropic, model, llmx.CapabilityType_CAPABILITY_TYPE_VISION,
+				&llmx.Vision{
+					SupportedFormats: []llmx.ImageFormat{
+						llmx.ImageFormat_IMAGE_FORMAT_JPEG,
+						llmx.ImageFormat_IMAGE_FORMAT_PNG,
+						llmx.ImageFormat_IMAGE_FORMAT_GIF,
+						llmx.ImageFormat_IMAGE_FORMAT_WEBP,
+					},
+					MaxImageSizeBytes:       5 * 1024 * 1024, // 5MB
+					MaxImagesPerRequest:     20,
+					SupportsVideoFrames:     false,
+					MaxResolutionWidth:      8192,
+					MaxResolutionHeight:     8192,
+					SupportsOcr:             true,
+					SupportsObjectDetection: false,
+				})
+		}
+
+		// System prompt support for all models
+		registry.RegisterCapability(ProviderAnthropic, model, llmx.CapabilityType_CAPABILITY_TYPE_SYSTEM_PROMPT,
+			&llmx.SystemPrompt{
+				MaxLength:        100000,
+				SupportsMultiple: true,
+				SupportsCaching:  true,
+				Format:           llmx.DataFormat_DATA_FORMAT_PLAIN,
+			})
 	}
 }
 
 // HasCapability checks if a capability is supported
-func (p *AnthropicProvider) HasCapability(capability Capability, model string) bool {
+func (p *AnthropicProvider) HasCapability(capability llmx.CapabilityType, model string) bool {
 	targetModel := p.model
 	if model != "" {
 		targetModel = model
 	}
-	return GetRegistry().HasCapability(ProviderAnthropic, targetModel, capability)
+	return GetCapabilityRegistry().HasCapability(ProviderAnthropic, targetModel, capability)
 }
 
 // Endpoint returns the Anthropic API endpoint URL.
@@ -228,7 +286,7 @@ func (p *AnthropicProvider) PrepareRequest(req *Request, options map[string]any)
 
 	p.addMessagesToRequestBody(requestBody, req.Messages, options)
 
-	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
+	if req.ResponseSchema != nil && p.HasCapability(llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
 		err := p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 		if err != nil {
 			return nil, fmt.Errorf("failed to add structured response: %w", err)
@@ -254,7 +312,7 @@ func (p *AnthropicProvider) PrepareStreamRequest(req *Request, options map[strin
 		model = m
 	}
 
-	if !p.HasCapability(CapStreaming, model) {
+	if !p.HasCapability(llmx.CapabilityType_CAPABILITY_TYPE_STREAMING, model) {
 		return nil, errors.New("streaming is not supported by this provider")
 	}
 	requestBody := p.initializeRequestBodyWithModel(model)
@@ -266,7 +324,7 @@ func (p *AnthropicProvider) PrepareStreamRequest(req *Request, options map[strin
 
 	p.addMessagesToRequestBody(requestBody, req.Messages, options)
 
-	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
+	if req.ResponseSchema != nil && p.HasCapability(llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
 		err := p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 		if err != nil {
 			return nil, fmt.Errorf("failed to add structured response: %w", err)
@@ -434,7 +492,7 @@ func (p *AnthropicProvider) addSystemPromptToRequestBody(requestBody map[string]
 		return
 	}
 
-	parts := splitSystemPrompt(systemPrompt, AnthropicSystemPromptMaxParts)
+	parts := splitSystemPrompt(systemPrompt, anthropicSystemPromptMaxParts)
 	for i, part := range parts {
 		systemMessage := map[string]any{
 			"type": "text",

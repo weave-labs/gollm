@@ -9,6 +9,8 @@ import (
 	"io"
 	"slices"
 
+	"github.com/weave-labs/weave-go/weaveapi/llmx/v1"
+
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
 )
@@ -69,7 +71,7 @@ func NewOpenRouterProvider(apiKey, model string, extraHeaders map[string]string)
 		logger:       logging.NewLogger(logging.LogLevelInfo),
 	}
 
-	// Register capabilities based on model
+	// AddCapability capabilities based on model
 	p.registerCapabilities()
 	return p
 }
@@ -86,13 +88,13 @@ func (p *OpenRouterProvider) Name() string {
 
 // registerCapabilities registers capabilities for all known OpenRouter models
 func (p *OpenRouterProvider) registerCapabilities() {
-	registry := GetRegistry()
+	registry := GetCapabilityRegistry()
 
 	// Get all structured response models and function calling models
 	structuredResponseModels := p.getStructuredResponseModels()
 	functionCallingModels := p.getFunctionCallingModels()
 
-	// Register capabilities for all models we know about
+	// AddCapability capabilities for all models we know about
 	allModels := make(map[string]bool)
 	for _, model := range structuredResponseModels {
 		allModels[model] = true
@@ -114,46 +116,57 @@ func (p *OpenRouterProvider) registerCapabilities() {
 		allModels[model] = true
 	}
 
-	// Register capabilities for all models
+	// AddCapability capabilities for all models
 	for model := range allModels {
 		// Check if model supports structured response
 		if slices.Contains(structuredResponseModels, model) {
-			registry.Register(ProviderOpenRouter, model, CapStructuredResponse, StructuredResponseConfig{
-				RequiresToolUse:  false,
-				MaxSchemaDepth:   10,
-				SupportedFormats: []string{"json_schema"},
-				RequiresJSONMode: false,
-			})
+			registry.RegisterCapability(ProviderOpenRouter, model,
+				llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &llmx.StructuredResponse{
+					RequiresToolUse:  false,
+					MaxSchemaDepth:   10,
+					SupportedFormats: []llmx.DataFormat{llmx.DataFormat_DATA_FORMAT_JSON},
+					RequiresJsonMode: false,
+				})
 		}
 
 		// Check if model supports function calling
 		if slices.Contains(functionCallingModels, model) {
-			registry.Register(ProviderOpenRouter, model, CapFunctionCalling, FunctionCallingConfig{
-				MaxFunctions:      128,
-				SupportsParallel:  true,
-				MaxParallelCalls:  10,
-				RequiresToolRole:  false,
-				SupportsStreaming: true,
-			})
+			registry.RegisterCapability(ProviderOpenRouter, model,
+				llmx.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING, &llmx.FunctionCalling{
+					MaxFunctions:      128,
+					SupportsParallel:  true,
+					MaxParallelCalls:  10,
+					RequiresToolRole:  false,
+					SupportsStreaming: true,
+					SupportedParameterTypes: []llmx.JsonSchemaType{
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					},
+					MaxNestingDepth: 10,
+				})
 		}
 
 		// All OpenRouter models support streaming
-		registry.Register(ProviderOpenRouter, model, CapStreaming, StreamingConfig{
-			SupportsSSE:    true,
-			BufferSize:     4096,
-			ChunkDelimiter: "data: ",
-			SupportsUsage:  true,
-		})
+		registry.RegisterCapability(ProviderOpenRouter, model, llmx.CapabilityType_CAPABILITY_TYPE_STREAMING,
+			&llmx.Streaming{
+				SupportsSse:    true,
+				BufferSize:     4096,
+				ChunkDelimiter: "data: ",
+				SupportsUsage:  true,
+			})
 	}
 }
 
 // HasCapability checks if a capability is supported
-func (p *OpenRouterProvider) HasCapability(capability Capability, model string) bool {
+func (p *OpenRouterProvider) HasCapability(capability llmx.CapabilityType, model string) bool {
 	targetModel := p.model
 	if model != "" {
 		targetModel = model
 	}
-	return GetRegistry().HasCapability(ProviderOpenRouter, targetModel, capability)
+	return GetCapabilityRegistry().HasCapability(ProviderOpenRouter, targetModel, capability)
 }
 
 // Endpoint returns the OpenRouter API endpoint URL for chat completions.
@@ -634,7 +647,7 @@ func (p *OpenRouterProvider) convertMessage(msg *Message) map[string]any {
 
 // handleStructuredResponse adds structured response schema if supported
 func (p *OpenRouterProvider) handleStructuredResponse(requestBody map[string]any, req *Request, model string) {
-	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
+	if req.ResponseSchema != nil && p.HasCapability(llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
 		requestBody["response_format"] = map[string]any{
 			"type":   "json_object",
 			"schema": req.ResponseSchema,
@@ -863,7 +876,7 @@ func (p *OpenRouterProvider) PrepareStreamRequest(req *Request, options map[stri
 		model = m
 	}
 
-	if !p.HasCapability(CapStreaming, model) {
+	if !p.HasCapability(llmx.CapabilityType_CAPABILITY_TYPE_STREAMING, model) {
 		return nil, errors.New("streaming is not supported by this provider")
 	}
 

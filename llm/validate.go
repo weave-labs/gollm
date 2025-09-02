@@ -36,7 +36,7 @@ func getValidator() *validator.Validate {
 	validateOnce.Do(func() {
 		validate = validator.New()
 
-		// Register custom validator for API key map
+		// AddCapability custom validator for API key map
 		if err := validate.RegisterValidation("apikey", validateAPIKey); err != nil {
 			// This is a critical setup failure
 			panic(fmt.Sprintf("failed to register API key validator: %v", err))

@@ -11,6 +11,7 @@ import (
 
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
+	"github.com/weave-labs/weave-go/weaveapi/llmx/v1"
 )
 
 // Common parameter keys
@@ -62,7 +63,7 @@ func NewMistralProvider(apiKey, model string, extraHeaders map[string]string) *M
 		logger:       logging.NewLogger(logging.LogLevelInfo),
 	}
 
-	// Register capabilities based on model
+	// AddCapability capabilities based on model
 	p.registerCapabilities()
 	return p
 }
@@ -100,7 +101,7 @@ func (p *MistralProvider) Name() string {
 
 // registerCapabilities registers capabilities for all known Mistral models
 func (p *MistralProvider) registerCapabilities() {
-	registry := GetRegistry()
+	registry := GetCapabilityRegistry()
 
 	// Define all known Mistral models
 	allModels := []string{
@@ -138,11 +139,20 @@ func (p *MistralProvider) registerCapabilities() {
 	for _, model := range allModels {
 		// Structured response - all models except codestral-mamba
 		if model != "codestral-mamba" && model != "mistral-embed" {
-			registry.Register(ProviderMistral, model, CapStructuredResponse, StructuredResponseConfig{
-				MaxSchemaDepth:   10,
-				SupportedFormats: []string{"json_schema"},
-				RequiresJSONMode: true,
-			})
+			registry.RegisterCapability(ProviderMistral, model,
+				llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &llmx.StructuredResponse{
+					MaxSchemaDepth:   10,
+					SupportedFormats: []llmx.DataFormat{llmx.DataFormat_DATA_FORMAT_JSON},
+					RequiresJsonMode: true,
+					SupportedTypes: []llmx.JsonSchemaType{
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					},
+					MaxProperties: 100,
+				})
 		}
 
 		// Function calling - specific models
@@ -169,42 +179,61 @@ func (p *MistralProvider) registerCapabilities() {
 		}
 
 		if functionCallingSupportedModels[model] {
-			registry.Register(ProviderMistral, model, CapFunctionCalling, FunctionCallingConfig{
-				MaxFunctions:      100,
-				SupportsParallel:  true,
-				MaxParallelCalls:  10,
-				SupportsStreaming: true,
-			})
+			registry.RegisterCapability(ProviderMistral, model, llmx.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
+				&llmx.FunctionCalling{
+					MaxFunctions:      100,
+					SupportsParallel:  true,
+					MaxParallelCalls:  10,
+					SupportsStreaming: true,
+					RequiresToolRole:  false,
+					SupportedParameterTypes: []llmx.JsonSchemaType{
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					},
+					MaxNestingDepth: 10,
+				})
 		}
 
 		// All Mistral models support streaming (except embed)
 		if model != "mistral-embed" {
-			registry.Register(ProviderMistral, model, CapStreaming, StreamingConfig{
-				SupportsSSE:    true,
-				BufferSize:     4096,
-				ChunkDelimiter: "data: ",
-				SupportsUsage:  true,
-			})
+			registry.RegisterCapability(ProviderMistral, model, llmx.CapabilityType_CAPABILITY_TYPE_STREAMING,
+				&llmx.Streaming{
+					SupportsSse:    true,
+					BufferSize:     4096,
+					ChunkDelimiter: "data: ",
+					SupportsUsage:  true,
+				})
 		}
 
 		// Vision for pixtral models
 		if strings.Contains(model, "pixtral") {
-			registry.Register(ProviderMistral, model, CapVision, VisionConfig{
-				MaxImageSize:        10 * 1024 * 1024,
-				SupportedFormats:    []string{"jpeg", "png", "webp"},
-				MaxImagesPerRequest: 5,
-			})
+			registry.RegisterCapability(ProviderMistral, model, llmx.CapabilityType_CAPABILITY_TYPE_VISION,
+				&llmx.Vision{
+					MaxImageSizeBytes: 10 * 1024 * 1024,
+					SupportedFormats: []llmx.ImageFormat{
+						llmx.ImageFormat_IMAGE_FORMAT_JPEG,
+						llmx.ImageFormat_IMAGE_FORMAT_PNG,
+						llmx.ImageFormat_IMAGE_FORMAT_WEBP,
+					},
+					MaxImagesPerRequest:     5,
+					SupportsVideoFrames:     false,
+					SupportsOcr:             true,
+					SupportsObjectDetection: false,
+				})
 		}
 	}
 }
 
 // HasCapability checks if a capability is supported
-func (p *MistralProvider) HasCapability(capability Capability, model string) bool {
+func (p *MistralProvider) HasCapability(capability llmx.CapabilityType, model string) bool {
 	targetModel := p.model
 	if model != "" {
 		targetModel = model
 	}
-	return GetRegistry().HasCapability(ProviderMistral, targetModel, capability)
+	return GetCapabilityRegistry().HasCapability(ProviderMistral, targetModel, capability)
 }
 
 // Endpoint returns the Mistral API endpoint URL.
@@ -253,7 +282,7 @@ func (p *MistralProvider) PrepareRequest(req *Request, options map[string]any) (
 	p.addMessagesToRequestBody(requestBody, req.Messages)
 
 	// Add structured response if supported
-	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
+	if req.ResponseSchema != nil && p.HasCapability(llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
 		p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 	}
 
@@ -353,7 +382,7 @@ func (p *MistralProvider) PrepareStreamRequest(req *Request, options map[string]
 	p.addMessagesToRequestBody(requestBody, req.Messages)
 
 	// Add structured response if supported
-	if req.ResponseSchema != nil && p.HasCapability(CapStructuredResponse, model) {
+	if req.ResponseSchema != nil && p.HasCapability(llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
 		p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 	}
 

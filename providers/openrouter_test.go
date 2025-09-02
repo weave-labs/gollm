@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/modelcontextprotocol/go-sdk/jsonschema"
+	"github.com/invopop/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/weave-labs/gollm/config"
+	"github.com/weave-labs/weave-go/weaveapi/llmx/v1"
 )
 
 func TestOpenRouterProvider(t *testing.T) {
@@ -41,12 +42,13 @@ func TestOpenRouterProvider(t *testing.T) {
 
 	t.Run("HasCapability StructuredResponse returns true", func(t *testing.T) {
 		t.Logf("Provider model: %s", provider.model)
-		t.Logf("HasCapability(CapStructuredResponse): %v", provider.HasCapability(CapStructuredResponse))
-		assert.True(t, provider.HasCapability(CapStructuredResponse))
+		t.Logf("HasCapability(CapStructuredResponse): %v",
+			provider.HasCapability(llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, ""))
+		assert.True(t, provider.HasCapability(llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, ""))
 	})
 
 	t.Run("HasCapability Streaming returns true", func(t *testing.T) {
-		assert.True(t, provider.HasCapability(CapStreaming))
+		assert.True(t, provider.HasCapability(llmx.CapabilityType_CAPABILITY_TYPE_STREAMING, ""))
 	})
 
 	t.Run("SetDefaultOptions sets correct options", func(t *testing.T) {

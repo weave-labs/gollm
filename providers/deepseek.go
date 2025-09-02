@@ -12,6 +12,7 @@ import (
 
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
+	"github.com/weave-labs/weave-go/weaveapi/llmx/v1"
 )
 
 // Common parameter keys
@@ -57,36 +58,9 @@ func NewDeepSeekProvider(apiKey, model string, extraHeaders map[string]string) *
 		p.extraHeaders[k] = v
 	}
 
-	// Register capabilities based on model
+	// AddCapability capabilities based on model
 	p.registerCapabilities()
 	return p
-}
-
-// SetLogger configures the logger for the DeepSeek provider.
-// This is used for debugging and monitoring API interactions.
-func (p *DeepSeekProvider) SetLogger(logger logging.Logger) {
-	p.logger = logger
-}
-
-// SetOption sets a specific option for the DeepSeek provider.
-// Supported options include:
-//   - temperature: Controls randomness (0.0 to 2.0)
-//   - max_tokens: Maximum tokens in the response
-//   - top_p: Nucleus sampling parameter
-//   - seed: Random seed for deterministic output
-//   - stop: Stop sequences
-func (p *DeepSeekProvider) SetOption(key string, value any) {
-	p.options[key] = value
-}
-
-// SetDefaultOptions configures standard options from the global configuration.
-// This includes temperature, max tokens, and sampling parameters.
-func (p *DeepSeekProvider) SetDefaultOptions(cfg *config.Config) {
-	p.SetOption(deepSeekKeyTemperature, cfg.Temperature)
-	p.SetOption(deepSeekKeyMaxTokens, cfg.MaxTokens)
-	if cfg.Seed != nil {
-		p.SetOption(deepSeekKeySeed, *cfg.Seed)
-	}
 }
 
 // SetLogger configures the logger for the DeepSeek provider.
@@ -123,7 +97,7 @@ func (p *DeepSeekProvider) Name() string {
 
 // registerCapabilities registers capabilities for all known DeepSeek models
 func (p *DeepSeekProvider) registerCapabilities() {
-	registry := GetRegistry()
+	registry := GetCapabilityRegistry()
 
 	// Define all known DeepSeek models
 	allModels := []string{
@@ -159,49 +133,72 @@ func (p *DeepSeekProvider) registerCapabilities() {
 
 	for _, model := range allModels {
 		// Most DeepSeek models support function calling
-		registry.Register(ProviderDeepSeek, model, CapFunctionCalling, FunctionCallingConfig{
-			MaxFunctions:      64,
-			SupportsParallel:  true,
-			MaxParallelCalls:  5,
-			RequiresToolRole:  false,
-			SupportsStreaming: false,
-		})
+		registry.RegisterCapability(ProviderDeepSeek, model, llmx.CapabilityType_CAPABILITY_TYPE_FUNCTION_CALLING,
+			&llmx.FunctionCalling{
+				MaxFunctions:      64,
+				SupportsParallel:  true,
+				MaxParallelCalls:  5,
+				RequiresToolRole:  false,
+				SupportsStreaming: false,
+				SupportedParameterTypes: []llmx.JsonSchemaType{
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					llmx.JsonSchemaType_JSON_SCHEMA_TYPE_NULL,
+				},
+				MaxNestingDepth: 10,
+			})
 
 		// Newer models support structured responses
 		if model == "deepseek-chat" || model == "deepseek-reasoner" ||
 			model == "deepseek-r1" || model == "deepseek-v2.5" ||
 			model == "deepseek-v2-chat" || model == "deepseek-coder-v2-instruct" {
-			registry.Register(ProviderDeepSeek, model, CapStructuredResponse, StructuredResponseConfig{
-				RequiresToolUse:  false,
-				MaxSchemaDepth:   10,
-				SupportedFormats: []string{"json_object"},
-				RequiresJSONMode: true,
-			})
+			registry.RegisterCapability(ProviderDeepSeek, model,
+				llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, &llmx.StructuredResponse{
+					RequiresToolUse:  false,
+					MaxSchemaDepth:   10,
+					SupportedFormats: []llmx.DataFormat{llmx.DataFormat_DATA_FORMAT_JSON},
+					RequiresJsonMode: true,
+					SupportedTypes: []llmx.JsonSchemaType{
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_OBJECT,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_ARRAY,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_STRING,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_NUMBER,
+						llmx.JsonSchemaType_JSON_SCHEMA_TYPE_BOOLEAN,
+					},
+					MaxProperties: 100,
+				})
 		}
 
 		// All models support streaming
-		registry.Register(ProviderDeepSeek, model, CapStreaming, StreamingConfig{
-			SupportsSSE:    true,
-			BufferSize:     4096,
-			ChunkDelimiter: "data: ",
-			SupportsUsage:  false,
-		})
+		registry.RegisterCapability(ProviderDeepSeek, model, llmx.CapabilityType_CAPABILITY_TYPE_STREAMING,
+			&llmx.Streaming{
+				SupportsSse:    true,
+				BufferSize:     4096,
+				ChunkDelimiter: "data: ",
+				SupportsUsage:  false,
+			})
 
 		// System prompt support for all models
-		registry.Register(ProviderDeepSeek, model, CapSystemPrompt, SystemPromptConfig{
-			MaxLength:        8192,
-			SupportsMultiple: false,
-		})
+		registry.RegisterCapability(ProviderDeepSeek, model, llmx.CapabilityType_CAPABILITY_TYPE_SYSTEM_PROMPT,
+			&llmx.SystemPrompt{
+				MaxLength:        8192,
+				SupportsMultiple: false,
+				SupportsCaching:  false,
+				Format:           llmx.DataFormat_DATA_FORMAT_PLAIN,
+			})
 	}
 }
 
 // HasCapability checks if a capability is supported
-func (p *DeepSeekProvider) HasCapability(capability Capability, model string) bool {
+func (p *DeepSeekProvider) HasCapability(capability llmx.CapabilityType, model string) bool {
 	targetModel := p.model
 	if model != "" {
 		targetModel = model
 	}
-	return GetRegistry().HasCapability(ProviderDeepSeek, targetModel, capability)
+	return GetCapabilityRegistry().HasCapability(ProviderDeepSeek, targetModel, capability)
 }
 
 // Endpoint returns the DeepSeek API endpoint URL.
