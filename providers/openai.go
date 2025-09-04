@@ -8,6 +8,8 @@ import (
 	"io"
 	"strings"
 
+	"github.com/invopop/jsonschema"
+
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
 	"github.com/weave-labs/gollm/internal/models"
@@ -312,7 +314,10 @@ func (p *OpenAIProvider) PrepareRequest(req *Request, options map[string]any) ([
 
 	// Handle structured response schema
 	if req.ResponseSchema != nil && p.HasCapability(llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
-		p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
+		err := p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Add remaining options
@@ -422,7 +427,10 @@ func (p *OpenAIProvider) PrepareStreamRequest(req *Request, options map[string]a
 
 	// Handle structured response schema
 	if req.ResponseSchema != nil && p.HasCapability(llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
-		p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
+		err := p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Add remaining options
@@ -624,17 +632,18 @@ func (p *OpenAIProvider) handleToolsForRequest(requestBody map[string]any, optio
 	}
 }
 
-// addStructuredResponseToRequest adds structured response schema to the request
-func (p *OpenAIProvider) addStructuredResponseToRequest(requestBody map[string]any, schema any) {
-	// For OpenAI, we use response_format with JSON schema
+// addStructuredResponseToRequest adds a structured response schema to the request
+func (p *OpenAIProvider) addStructuredResponseToRequest(requestBody map[string]any, responseJSONSchema *jsonschema.Schema) error {
 	requestBody["response_format"] = map[string]any{
 		"type": "json_schema",
 		"json_schema": map[string]any{
 			"name":   "response",
-			"schema": schema,
-			"strict": true,
+			"schema": responseJSONSchema,
+			"strict": false,
 		},
 	}
+
+	return nil
 }
 
 // addRemainingOptions adds any remaining options to the request body
