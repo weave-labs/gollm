@@ -643,7 +643,7 @@ func (p *OpenAIProvider) addStructuredResponseToRequest(
 		"json_schema": map[string]any{
 			"name":   "response",
 			"schema": responseJSONSchema,
-			"strict": true,
+			"strict": false,
 		},
 	}
 
