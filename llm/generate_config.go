@@ -1,6 +1,8 @@
 package llm
 
 import (
+	"reflect"
+
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
@@ -19,8 +21,14 @@ func WithStructuredResponse[T any]() GenerateOption {
 			panic(err)
 		}
 
+		var zero T
+		rt := reflect.TypeOf(zero)
+		if rt.Kind() == reflect.Ptr {
+			rt = rt.Elem()
+		}
+
+		cfg.structuredResponseType = reflect.New(rt).Interface()
 		cfg.StructuredResponseSchema = schema
-		cfg.structuredResponseType = *new(T)
 	}
 }
 

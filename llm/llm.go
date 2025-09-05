@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"reflect"
 	"sync"
 	"time"
 
@@ -263,12 +262,7 @@ func (l *LLMImpl) attemptGenerate(
 			return nil, NewLLMError(ErrorTypeResponse, "response content is not text", nil)
 		}
 
-		t := genCfg.structuredResponseType
-		if reflect.TypeOf(t).Kind() != reflect.Ptr {
-			t = &genCfg.structuredResponseType
-		}
-
-		if err := json.Unmarshal([]byte(textContent.Value), t); err != nil {
+		if err := json.Unmarshal([]byte(textContent.Value), genCfg.structuredResponseType); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal structured response: %w", err)
 		}
 	}
