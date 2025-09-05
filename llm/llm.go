@@ -12,13 +12,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/invopop/jsonschema"
-
-	"github.com/weave-labs/weave-go/weaveapi/llmx/v1"
+	"github.com/google/jsonschema-go/jsonschema"
 
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
 	"github.com/weave-labs/gollm/providers"
+	"github.com/weave-labs/weave-go/weaveapi/llmx/v1"
 )
 
 const (

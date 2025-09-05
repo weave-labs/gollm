@@ -1,6 +1,6 @@
 package providers
 
-import "github.com/invopop/jsonschema"
+import "github.com/google/jsonschema-go/jsonschema"
 
 // RequestBuilder helps construct Request objects
 type RequestBuilder struct {
