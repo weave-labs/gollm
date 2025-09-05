@@ -254,16 +254,16 @@ func (l *LLMImpl) attemptGenerate(
 		return response, err
 	}
 
-	if schema != nil {
-		textContent, ok := response.Content.(providers.Text)
-		if !ok {
-			return nil, NewLLMError(ErrorTypeResponse, "response content is not text", nil)
-		}
-
-		if err := ValidateAgainstSchema(textContent.Value, schema); err != nil {
-			return nil, NewLLMError(ErrorTypeResponse, "response does not match schema", err)
-		}
-	}
+	// if schema != nil {
+	// 	textContent, ok := response.Content.(providers.Text)
+	// 	if !ok {
+	// 		return nil, NewLLMError(ErrorTypeResponse, "response content is not text", nil)
+	// 	}
+	//
+	// 	if err := ValidateAgainstSchema(textContent.Value, schema); err != nil {
+	// 		return nil, NewLLMError(ErrorTypeResponse, "response does not match schema", err)
+	// 	}
+	// }
 
 	return response, nil
 }

@@ -19,13 +19,6 @@ func WithStructuredResponse[T any]() GenerateOption {
 			panic(err)
 		}
 
-		foo, err := schema.MarshalJSON()
-		if err != nil {
-			panic(err)
-		}
-
-		println(foo)
-
 		cfg.StructuredResponse = schema
 	}
 }
