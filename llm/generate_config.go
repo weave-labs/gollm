@@ -19,7 +19,8 @@ func WithStructuredResponse[T any]() GenerateOption {
 			panic(err)
 		}
 
-		cfg.StructuredResponse = schema
+		cfg.StructuredResponseSchema = schema
+		cfg.structuredResponseType = *new(T)
 	}
 }
 
@@ -39,7 +40,8 @@ func WithRetryStrategy(strategy RetryStrategy) GenerateOption {
 
 // GenerateConfig holds configuration options for text generation.
 type GenerateConfig struct {
-	RetryStrategy      RetryStrategy
-	StructuredResponse *jsonschema.Schema
-	StreamBufferSize   int
+	RetryStrategy            RetryStrategy
+	StructuredResponseSchema *jsonschema.Schema
+	StreamBufferSize         int
+	structuredResponseType   any
 }

@@ -41,6 +41,16 @@ type Content interface {
 	isContent()
 }
 
+// func (r *Response[T]) AsStructured() (T, error) {
+// 	if textContent, ok := r.Content.(Text); ok {
+// 		var t T
+// 		err := json.Unmarshal([]byte(textContent.Value), &t)
+// 		return t, err
+// 	}
+//
+// 	return "", nil
+// }
+
 // AsText attempts to extract the text content from the response.
 func (r *Response) AsText() string {
 	if textContent, ok := r.Content.(Text); ok {

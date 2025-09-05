@@ -6,9 +6,11 @@ package llm
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"sync"
 	"time"
 
@@ -53,14 +55,15 @@ type LLM interface {
 //
 //nolint:revive // LLMImpl clearly indicates this is the implementation of the LLM interface
 type LLMImpl struct {
-	Provider     providers.Provider
-	logger       logging.Logger
-	Options      map[string]any
-	client       *http.Client
-	config       *config.Config
-	MaxRetries   int
-	RetryDelay   time.Duration
-	optionsMutex sync.RWMutex
+	Provider             providers.Provider
+	logger               logging.Logger
+	Options              map[string]any
+	client               *http.Client
+	config               *config.Config
+	MaxRetries           int
+	RetryDelay           time.Duration
+	optionsMutex         sync.RWMutex
+	structuredOutputType any
 }
 
 // NewLLM creates a new LLM instance with the specified configuration.
@@ -131,7 +134,7 @@ func (l *LLMImpl) Generate(ctx context.Context, prompt *Prompt, opts ...Generate
 		l.SetOption("system_prompt", prompt.SystemPrompt)
 	}
 
-	return l.generateWithRetries(ctx, prompt, generateConfig.StructuredResponse)
+	return l.generateWithRetries(ctx, prompt, generateConfig)
 }
 
 // GenerateStream initiates a streaming response from the LLM.
@@ -166,8 +169,8 @@ func (l *LLMImpl) GenerateStream(ctx context.Context, prompt *Prompt, opts ...Ge
 		builder.WithSystemPrompt(prompt.SystemPrompt)
 	}
 
-	if generateConfig.StructuredResponse != nil {
-		builder.WithResponseSchema(generateConfig.StructuredResponse)
+	if generateConfig.StructuredResponseSchema != nil {
+		builder.WithResponseSchema(generateConfig.StructuredResponseSchema)
 	}
 
 	providerReq := builder.Build()
@@ -204,10 +207,10 @@ func (l *LLMImpl) GenerateStream(ctx context.Context, prompt *Prompt, opts ...Ge
 func (l *LLMImpl) generateWithRetries(
 	ctx context.Context,
 	prompt *Prompt,
-	schema *jsonschema.Schema,
+	genCfg *GenerateConfig,
 ) (*providers.Response, error) {
 	for attempt := 0; attempt <= l.MaxRetries; attempt++ {
-		result, err := l.attemptGenerate(ctx, prompt, schema)
+		result, err := l.attemptGenerate(ctx, prompt, genCfg)
 		if err == nil {
 			return result, nil
 		}
@@ -240,11 +243,11 @@ func (l *LLMImpl) wait(ctx context.Context) error {
 func (l *LLMImpl) attemptGenerate(
 	ctx context.Context,
 	prompt *Prompt,
-	schema *jsonschema.Schema,
+	genCfg *GenerateConfig,
 ) (*providers.Response, error) {
 	response := &providers.Response{}
 
-	reqBody, err := l.prepareRequestBody(prompt, schema)
+	reqBody, err := l.prepareRequestBody(prompt, genCfg.StructuredResponseSchema)
 	if err != nil {
 		return response, NewLLMError(ErrorTypeRequest, "failed to prepare request", err)
 	}
@@ -254,16 +257,21 @@ func (l *LLMImpl) attemptGenerate(
 		return response, err
 	}
 
-	// if schema != nil {
-	// 	textContent, ok := response.Content.(providers.Text)
-	// 	if !ok {
-	// 		return nil, NewLLMError(ErrorTypeResponse, "response content is not text", nil)
-	// 	}
-	//
-	// 	if err := ValidateAgainstSchema(textContent.Value, schema); err != nil {
-	// 		return nil, NewLLMError(ErrorTypeResponse, "response does not match schema", err)
-	// 	}
-	// }
+	if genCfg.StructuredResponseSchema != nil {
+		textContent, ok := response.Content.(providers.Text)
+		if !ok {
+			return nil, NewLLMError(ErrorTypeResponse, "response content is not text", nil)
+		}
+
+		t := genCfg.structuredResponseType
+		if reflect.TypeOf(t).Kind() != reflect.Ptr {
+			t = &genCfg.structuredResponseType
+		}
+
+		if err := json.Unmarshal([]byte(textContent.Value), t); err != nil {
+			return nil, NewLLMError(ErrorTypeResponse, "response does not match schema", err)
+		}
+	}
 
 	return response, nil
 }
