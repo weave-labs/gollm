@@ -19,6 +19,9 @@ func WithStructuredResponse[T any]() GenerateOption {
 			panic(err)
 		}
 
+		foo := schema.String()
+		println(foo)
+
 		cfg.StructuredResponse = schema
 	}
 }
