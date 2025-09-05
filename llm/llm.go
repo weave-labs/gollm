@@ -296,8 +296,7 @@ func (l *LLMImpl) prepareRequestBody(prompt *Prompt, schema *jsonschema.Schema) 
 
 	builder := providers.NewRequestBuilder()
 	builder.WithSystemPrompt(prompt.SystemPrompt).
-		WithMessages(ToMessages(prompt.Messages)).
-		WithPrompt(prompt.Input)
+		WithMessages(ToMessages(prompt.Messages))
 
 	if schema != nil {
 		builder.WithResponseSchema(schema)
