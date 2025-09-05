@@ -269,7 +269,7 @@ func (l *LLMImpl) attemptGenerate(
 		}
 
 		if err := json.Unmarshal([]byte(textContent.Value), t); err != nil {
-			return nil, NewLLMError(ErrorTypeResponse, "response does not match schema", err)
+			return nil, fmt.Errorf("failed to unmarshal structured response: %w", err)
 		}
 	}
 
