@@ -52,15 +52,7 @@ tasks:
       VERSION:
         sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
     cmds:
-      - go build -ldflags "-X github.com/weave-labs/weave-cli/internal/telemetry.cliVersion={{.VERSION}} -X github.com/weave-labs/weave-cli/internal/telemetry.grafanaBasicAuthValue=${WEAVE_CLI_TELEMETRY_GRAFANA_AUTH}" ./...
-
-  buildx:
-    desc: Build the wv binary with optional version
-    vars:
-      VERSION:
-        sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
-    cmds:
-      - go build -ldflags "-X github.com/weave-labs/weave-cli/internal/telemetry.cliVersion={{.VERSION}} -X github.com/weave-labs/weave-cli/internal/telemetry.grafanaBasicAuthValue=${WEAVE_CLI_TELEMETRY_GRAFANA_AUTH}" -o ./wv ./cmd/wv
+      - go build  ./...
 
   gomodup:
     silent: true

@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/invopop/jsonschema"
+	"github.com/google/jsonschema-go/jsonschema"
 
 	"github.com/weave-labs/gollm/config"
 	"github.com/weave-labs/gollm/internal/logging"
@@ -124,7 +124,8 @@ func (p *OpenAIProvider) registerCapabilities() {
 	// Define all known OpenAI models
 	allModels := []string{
 		// GPT-4.1 models
-		"gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4.1-2025-04-14", "gpt-4.1-mini-2025-04-14", "gpt-4.1-nano-2025-04-14",
+		"gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4.1-2025-04-14", "gpt-4.1-mini-2025-04-14",
+		"gpt-4.1-nano-2025-04-14",
 
 		// GPT-4o models
 		"gpt-4o", "gpt-4o-mini", "gpt-4o-2024-11-20", "gpt-4o-2024-08-06", "gpt-4o-2024-05-13",
@@ -313,6 +314,14 @@ func (p *OpenAIProvider) PrepareRequest(req *Request, options map[string]any) ([
 	p.handleToolsForRequest(requestBody, options)
 
 	// Handle structured response schema
+	if req.ResponseJSON != nil && p.HasCapability(llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
+		err := p.addStructuredResponseJSONToRequest(requestBody, req.ResponseJSON)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Handle structured response schema
 	if req.ResponseSchema != nil && p.HasCapability(llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
 		err := p.addStructuredResponseToRequest(requestBody, req.ResponseSchema)
 		if err != nil {
@@ -424,6 +433,14 @@ func (p *OpenAIProvider) PrepareStreamRequest(req *Request, options map[string]a
 
 	// Handle tools if present in options
 	p.handleToolsForRequest(requestBody, options)
+
+	// Handle structured response schema
+	if req.ResponseJSON != nil && p.HasCapability(llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
+		err := p.addStructuredResponseJSONToRequest(requestBody, req.ResponseJSON)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	// Handle structured response schema
 	if req.ResponseSchema != nil && p.HasCapability(llmx.CapabilityType_CAPABILITY_TYPE_STRUCTURED_RESPONSE, model) {
@@ -633,12 +650,51 @@ func (p *OpenAIProvider) handleToolsForRequest(requestBody map[string]any, optio
 }
 
 // addStructuredResponseToRequest adds a structured response schema to the request
-func (p *OpenAIProvider) addStructuredResponseToRequest(requestBody map[string]any, responseJSONSchema *jsonschema.Schema) error {
+func (p *OpenAIProvider) addStructuredResponseToRequest(
+	requestBody map[string]any,
+	responseJSONSchema *jsonschema.Schema,
+) error {
+	responseJSON, err := responseJSONSchema.MarshalJSON()
+	if err != nil {
+		return fmt.Errorf("failed to marshal response schema: %w", err)
+	}
+
+	responseMap := make(map[string]any)
+
+	err = json.Unmarshal(responseJSON, &responseMap)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal response schema: %w", err)
+	}
+
 	requestBody["response_format"] = map[string]any{
 		"type": "json_schema",
 		"json_schema": map[string]any{
 			"name":   "response",
-			"schema": responseJSONSchema,
+			"schema": responseMap,
+			"strict": false,
+		},
+	}
+
+	return nil
+}
+
+// addStructuredResponseToRequest adds a structured response schema to the request
+func (p *OpenAIProvider) addStructuredResponseJSONToRequest(
+	requestBody map[string]any,
+	responseJSON []byte,
+) error {
+	responseMap := make(map[string]any)
+
+	err := json.Unmarshal(responseJSON, &responseMap)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal response schema: %w", err)
+	}
+
+	requestBody["response_format"] = map[string]any{
+		"type": "json_schema",
+		"json_schema": map[string]any{
+			"name":   "response",
+			"schema": responseMap,
 			"strict": false,
 		},
 	}

@@ -107,6 +107,11 @@ func WithStructuredResponseSchema[T any]() llm.GenerateOption {
 	return llm.WithStructuredResponse[T]()
 }
 
+// WithStructuredResponseJSON Provides a way to specify a JSON schema directly for structured responses.
+func WithStructuredResponseJSON(json []byte) llm.GenerateOption {
+	return llm.WithStructuredResponseJSON(json)
+}
+
 // IsKnownProvider returns true if the given provider name is recognized by the library.
 // A provider is considered known if it has a ProviderConfig registered in the default registry.
 // Note: This does not guarantee the provider can be instantiated (constructor may be missing).
