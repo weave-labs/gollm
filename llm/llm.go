@@ -168,6 +168,10 @@ func (l *LLMImpl) GenerateStream(ctx context.Context, prompt *Prompt, opts ...Ge
 		builder.WithSystemPrompt(prompt.SystemPrompt)
 	}
 
+	if generateConfig.StructuredResponseJSON != nil {
+		builder.WithResponseJSONSchema(generateConfig.StructuredResponseJSON)
+	}
+
 	if generateConfig.StructuredResponseSchema != nil {
 		builder.WithResponseSchema(generateConfig.StructuredResponseSchema)
 	}

@@ -32,6 +32,13 @@ func WithStructuredResponse[T any]() GenerateOption {
 	}
 }
 
+// WithStructuredResponseJSON configures Generate to produce output conforming to the provided JSON schema.
+func WithStructuredResponseJSON(json []byte) GenerateOption {
+	return func(cfg *GenerateConfig) {
+		cfg.StructuredResponseJSON = json
+	}
+}
+
 // WithStreamBufferSize sets the size of the token buffer for streaming responses.
 func WithStreamBufferSize(size int) GenerateOption {
 	return func(cfg *GenerateConfig) {
@@ -50,6 +57,7 @@ func WithRetryStrategy(strategy RetryStrategy) GenerateOption {
 type GenerateConfig struct {
 	RetryStrategy            RetryStrategy
 	StructuredResponseSchema *jsonschema.Schema
+	StructuredResponseJSON   []byte
 	StreamBufferSize         int
 	structuredResponseType   any
 }

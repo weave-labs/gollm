@@ -10,6 +10,7 @@ import (
 type Request struct {
 	Model          string             `json:"model,omitempty"` // Optional model override
 	ResponseSchema *jsonschema.Schema `json:"response_schema,omitempty"`
+	ResponseJSON   []byte             `json:"response_json,omitempty"`
 	SystemPrompt   string             `json:"system_prompt,omitempty"`
 	Messages       []Message          `json:"messages"`
 }

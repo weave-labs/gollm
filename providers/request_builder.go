@@ -5,6 +5,7 @@ import "github.com/google/jsonschema-go/jsonschema"
 // RequestBuilder helps construct Request objects
 type RequestBuilder struct {
 	responseSchema *jsonschema.Schema
+	responseJSON   []byte
 	systemPrompt   string
 	messages       []Message
 }
@@ -52,11 +53,17 @@ func (rb *RequestBuilder) WithResponseSchema(schema *jsonschema.Schema) *Request
 	return rb
 }
 
+func (rb *RequestBuilder) WithResponseJSONSchema(json []byte) *RequestBuilder {
+	rb.responseJSON = json
+	return rb
+}
+
 // Build creates the final Request object
 func (rb *RequestBuilder) Build() *Request {
 	return &Request{
 		Messages:       rb.messages,
 		ResponseSchema: rb.responseSchema,
+		ResponseJSON:   rb.responseJSON,
 		SystemPrompt:   rb.systemPrompt,
 	}
 }
