@@ -2,18 +2,18 @@ module github.com/weave-labs/gollm
 
 go 1.24.0
 
-toolchain go1.24.1
+toolchain go1.25.1
 
 require (
 	github.com/caarlos0/env/v11 v11.3.1
-	github.com/go-playground/validator/v10 v10.25.0
+	github.com/go-playground/validator/v10 v10.27.0
 	github.com/invopop/jsonschema v0.13.0
-	github.com/modelcontextprotocol/go-sdk v0.2.0
-	github.com/pkoukk/tiktoken-go v0.1.7
-	github.com/puzpuzpuz/xsync/v4 v4.1.0
-	github.com/stretchr/testify v1.10.0
+	github.com/modelcontextprotocol/go-sdk v0.5.0
+	github.com/pkoukk/tiktoken-go v0.1.8
+	github.com/puzpuzpuz/xsync/v4 v4.2.0
+	github.com/stretchr/testify v1.11.1
 	github.com/weave-labs/weave-go v0.25.1
-	golang.org/x/time v0.11.0
+	golang.org/x/time v0.13.0
 )
 
 require (
