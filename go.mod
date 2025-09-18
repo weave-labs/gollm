@@ -1,12 +1,11 @@
 module github.com/weave-labs/gollm
 
-go 1.24.0
-
-toolchain go1.24.1
+go 1.25.1
 
 require (
 	github.com/caarlos0/env/v11 v11.3.1
 	github.com/go-playground/validator/v10 v10.25.0
+	github.com/google/jsonschema-go v0.2.1-0.20250828145618-7d3a7746ff83
 	github.com/invopop/jsonschema v0.13.0
 	github.com/modelcontextprotocol/go-sdk v0.2.0
 	github.com/pkoukk/tiktoken-go v0.1.7
@@ -26,7 +25,6 @@ require (
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
-	github.com/google/jsonschema-go v0.2.1-0.20250828145618-7d3a7746ff83 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.2 // indirect
 	github.com/jhump/protoreflect v1.11.0 // indirect
