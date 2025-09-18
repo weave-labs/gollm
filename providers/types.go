@@ -3,13 +3,14 @@ package providers
 import (
 	"encoding/json"
 
-	"github.com/invopop/jsonschema"
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 // Request represents a unified request structure
 type Request struct {
 	Model          string             `json:"model,omitempty"` // Optional model override
 	ResponseSchema *jsonschema.Schema `json:"response_schema,omitempty"`
+	ResponseJSON   []byte             `json:"response_json,omitempty"`
 	SystemPrompt   string             `json:"system_prompt,omitempty"`
 	Messages       []Message          `json:"messages"`
 }
@@ -40,6 +41,16 @@ type Response struct {
 type Content interface {
 	isContent()
 }
+
+// func (r *Response[T]) AsStructured() (T, error) {
+// 	if textContent, ok := r.Content.(Text); ok {
+// 		var t T
+// 		err := json.Unmarshal([]byte(textContent.Value), &t)
+// 		return t, err
+// 	}
+//
+// 	return "", nil
+// }
 
 // AsText attempts to extract the text content from the response.
 func (r *Response) AsText() string {
