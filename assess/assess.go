@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/modelcontextprotocol/go-sdk/jsonschema"
+	"github.com/google/jsonschema-go/jsonschema"
 	"golang.org/x/time/rate"
 
 	"github.com/weave-labs/gollm"
@@ -162,7 +162,7 @@ func (tc *TestCase) WithTimeout(timeout time.Duration) *TestCase {
 
 // SetExpectedSchema sets the expected schema for validation
 func SetExpectedSchema[T any](tc *TestCase) *TestCase {
-	schema, err := jsonschema.For[T]()
+	schema, err := jsonschema.For[T](nil)
 	if err != nil {
 		panic(fmt.Errorf("failed to get schema for type %T: %w", tc, err))
 	}

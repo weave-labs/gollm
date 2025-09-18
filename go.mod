@@ -7,7 +7,6 @@ require (
 	github.com/go-playground/validator/v10 v10.27.0
 	github.com/google/jsonschema-go v0.2.3
 	github.com/invopop/jsonschema v0.13.0
-	github.com/modelcontextprotocol/go-sdk v0.5.0
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/puzpuzpuz/xsync/v4 v4.2.0
 	github.com/stretchr/testify v1.11.1
